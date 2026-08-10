@@ -1,10 +1,12 @@
 # OAuth flow
 
-The deployed `admin/accounts` frontend uses `/api/v1` as its Axios base path;
-the helper adds that prefix to these OpenAI endpoints:
+The deployed frontend uses `/api/v1` as its Axios base path. OpenAI OAuth must
+use the provider-specific routes; the similarly named `admin/accounts` routes
+generate Claude authorization sessions. The helper adds the prefix to these
+OpenAI endpoints:
 
-1. `POST /admin/accounts/generate-auth-url` with `{}` or `{proxy_id}`.
-2. `POST /admin/accounts/exchange-code` with
+1. `POST /admin/openai/generate-auth-url` with `{}` or `{proxy_id}`.
+2. `POST /admin/openai/exchange-code` with
    `{session_id, code, state}` and optional `proxy_id`.
 
 The first response contains `auth_url` and `session_id`; the helper derives the

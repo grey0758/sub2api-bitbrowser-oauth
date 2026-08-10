@@ -98,7 +98,7 @@ class Sub2ApiAdminClient {
 
   async generateOpenAiAuthUrl({ proxyId } = {}) {
     const body = proxyId == null || proxyId === '' ? {} : { proxy_id: proxyId };
-    const result = await this.post('/admin/accounts/generate-auth-url', body);
+    const result = await this.post('/admin/openai/generate-auth-url', body);
     const authUrl = result?.auth_url;
     const sessionId = result?.session_id;
     if (typeof authUrl !== 'string' || !/^https:\/\/auth\.openai\.com\/oauth\/authorize\?/i.test(authUrl)) {
@@ -116,7 +116,7 @@ class Sub2ApiAdminClient {
     if (!sessionId || !code || !state) throw new Error('sessionId, code, and state are required for OAuth exchange');
     const body = { session_id: sessionId, code, state };
     if (proxyId != null && proxyId !== '') body.proxy_id = proxyId;
-    return this.post('/admin/accounts/exchange-code', body);
+    return this.post('/admin/openai/exchange-code', body);
   }
 }
 

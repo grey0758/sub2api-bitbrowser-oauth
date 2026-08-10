@@ -11,8 +11,8 @@ profile and the Sub2API OpenAI OAuth account-import flow.
 - Releasing a session disconnects Playwright only; the named BitBrowser window
   remains open unless an operator explicitly passes `--close-window`.
 - Sub2API is called through the supported administrator endpoints:
-  `POST /admin/accounts/generate-auth-url` and
-  `POST /admin/accounts/exchange-code`.
+  `POST /admin/openai/generate-auth-url` and
+  `POST /admin/openai/exchange-code`.
 - Administrator credentials are runtime-only (`SUB2API_ADMIN_TOKEN`,
   `SUB2API_ADMIN_API_KEY`, or `SUB2API_ADMIN_COOKIE`). Never commit, print, or
   persist tokens, callback codes, OAuth URLs, cookies, or account payloads.

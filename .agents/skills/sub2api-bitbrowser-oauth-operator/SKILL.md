@@ -12,12 +12,12 @@ description: Use this skill when generating or exchanging a Sub2API OpenAI OAuth
    duplicate names stop the operation.
 2. Inject exactly one Sub2API administrator credential at runtime. Never read
    `.env`, shell history, Curator records, or account exports into a commit.
-3. Run `npm run start` to call `POST /admin/accounts/generate-auth-url` and
+3. Run `npm run start` to call `POST /admin/openai/generate-auth-url` and
    navigate the returned URL in `us001_codex`. The profile is pre-created;
    creation/deletion/cleanup is prohibited.
 4. Run `npm run run` when an end-to-end import is authorized. It waits for the
    localhost callback, checks the generated state, and calls
-   `POST /admin/accounts/exchange-code`.
+   `POST /admin/openai/exchange-code`.
 5. Keep the browser open for review. Only an explicit `--close-window` may
    call the close endpoint; deletion is not implemented.
 
