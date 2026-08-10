@@ -12,7 +12,7 @@
     "start": "node bin/sub2api-bitbrowser-oauth.js start",
     "run": "node bin/sub2api-bitbrowser-oauth.js run",
     "test": "node --test",
-    "syntax": "node --check bin/sub2api-bitbrowser-oauth.js && node --check src/bitbrowser/client.js && node --check src/bitbrowser/window-controller.js && node --check src/sub2api/admin-client.js && node --check src/oauth/flow.js"
+    "syntax": "node --check bin/sub2api-bitbrowser-oauth.js && node --check src/bitbrowser/client.js && node --check src/bitbrowser/window-controller.js && node --check src/sub2api/admin-client.js && node --check src/oauth/flow.js && node --check src/runtime-env.js"
   },
   "engines": { "node": ">=18.17" },
   "dependencies": {

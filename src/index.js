@@ -5,4 +5,5 @@ module.exports = {
   ...require('./bitbrowser/window-controller'),
   ...require('./sub2api/admin-client'),
   ...require('./oauth/flow'),
+  ...require('./runtime-env'),
 };

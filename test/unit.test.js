@@ -2,11 +2,40 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { BitBrowserClient } = require('../src/bitbrowser/client');
 const { FixedWindowController, exactWindowMatches, parseCallbackUrl } = require('../src/bitbrowser/window-controller');
 const { Sub2ApiAdminClient, parseCodeInput } = require('../src/sub2api/admin-client');
 const { OAuthFlow } = require('../src/oauth/flow');
+const { loadRuntimeEnv, parseRuntimeEnv } = require('../src/runtime-env');
+
+test('runtime environment parser only accepts allowlisted non-empty values', () => {
+  assert.deepEqual(parseRuntimeEnv('\n# comment\nSUB2API_ADMIN_API_KEY=secret\nSUB2API_BASE_URL=https://sub2apipro.opencodex.uk\n'), {
+    SUB2API_ADMIN_API_KEY: 'secret',
+    SUB2API_BASE_URL: 'https://sub2apipro.opencodex.uk',
+  });
+  assert.throws(() => parseRuntimeEnv('UNSAFE=value'), /Unsupported runtime environment key/);
+  assert.throws(() => parseRuntimeEnv('SUB2API_ADMIN_API_KEY='), /value is empty/);
+});
+
+test('runtime environment loader preserves explicit process values', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-runtime-'));
+  const file = path.join(directory, 'admin.env');
+  fs.writeFileSync(file, 'SUB2API_ADMIN_API_KEY=from-file\nSUB2API_BASE_URL=https://example.invalid\n', { mode: 0o600 });
+  const env = { SUB2API_ADMIN_API_KEY: 'from-process' };
+  try {
+    const loaded = loadRuntimeEnv({ file, env });
+    assert.equal(loaded.loaded, true);
+    assert.deepEqual(loaded.keys, ['SUB2API_ADMIN_API_KEY', 'SUB2API_BASE_URL']);
+    assert.equal(env.SUB2API_ADMIN_API_KEY, 'from-process');
+    assert.equal(env.SUB2API_BASE_URL, 'https://example.invalid');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('exact window matching does not select similar names or deleted windows', () => {
   const windows = [

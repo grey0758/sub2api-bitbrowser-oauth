@@ -4,6 +4,7 @@
 const { FixedWindowController } = require('../src/bitbrowser/window-controller');
 const { Sub2ApiAdminClient, Sub2ApiError } = require('../src/sub2api/admin-client');
 const { OAuthFlow } = require('../src/oauth/flow');
+const { loadRuntimeEnv } = require('../src/runtime-env');
 
 function parseArgs(argv) {
   const args = { command: argv[0] && !['--help', '-h'].includes(argv[0]) ? argv[0] : 'start' };
@@ -55,6 +56,7 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
+  loadRuntimeEnv();
   const flow = new OAuthFlow({ sub2api: new Sub2ApiAdminClient(), browser });
   if (args.command === 'start') {
     const started = await flow.start({ proxyId: args.proxyId });
