@@ -48,8 +48,8 @@ test('Sub2API OpenAI OAuth endpoint payload and callback parsing', async () => {
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, body: JSON.parse(init.body), authorization: init.headers.authorization });
-    if (url.endsWith('/generate-auth-url')) return new Response(JSON.stringify({ auth_url: 'https://auth.openai.com/oauth/authorize?state=expected', session_id: 'session' }), { status: 200 });
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (url.endsWith('/generate-auth-url')) return new Response(JSON.stringify({ code: 0, data: { auth_url: 'https://auth.openai.com/oauth/authorize?state=expected', session_id: 'session' } }), { status: 200 });
+    return new Response(JSON.stringify({ code: 0, data: { ok: true } }), { status: 200 });
   };
   const client = new Sub2ApiAdminClient({ token: 'runtime-only', fetchImpl });
   const authorization = await client.generateOpenAiAuthUrl();

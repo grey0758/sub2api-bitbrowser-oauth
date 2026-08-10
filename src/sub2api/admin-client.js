@@ -70,6 +70,14 @@ class Sub2ApiAdminClient {
       if (!response.ok) {
         throw new Sub2ApiError(`Sub2API ${path} failed (HTTP ${response.status})`, { status: response.status, data });
       }
+      // The web client unwraps the common `{code: 0, data: ...}` envelope in
+      // its Axios interceptor. Mirror that behavior for direct API calls.
+      if (data && typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, 'code')) {
+        if (data.code !== 0) {
+          throw new Sub2ApiError(`Sub2API ${path} returned an application error`, { status: response.status, data });
+        }
+        return data.data;
+      }
       return data;
     } catch (error) {
       if (error.name === 'AbortError') throw new Sub2ApiError(`Sub2API request timed out: ${path}`, { cause: error });
