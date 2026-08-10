@@ -19,6 +19,7 @@ Required runtime values:
 - `BITBROWSER_API_URL` (default `http://127.0.0.1:54345`)
 - `BITBROWSER_WINDOW_NAME` (default `us001_codex`)
 - `SUB2API_BASE_URL` (default `https://sub2apipro.opencodex.uk`)
+- `SUB2API_API_PREFIX` (default `/api/v1`, matching the deployed frontend)
 - one of `SUB2API_ADMIN_TOKEN`, `SUB2API_ADMIN_API_KEY`, or
   `SUB2API_ADMIN_COOKIE`
 

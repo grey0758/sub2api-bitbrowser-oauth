@@ -54,6 +54,7 @@ test('Sub2API OpenAI OAuth endpoint payload and callback parsing', async () => {
   const client = new Sub2ApiAdminClient({ token: 'runtime-only', fetchImpl });
   const authorization = await client.generateOpenAiAuthUrl();
   assert.deepEqual(authorization, { authUrl: 'https://auth.openai.com/oauth/authorize?state=expected', sessionId: 'session', state: 'expected' });
+  assert.equal(new URL(calls[0].url).pathname, '/api/v1/admin/accounts/generate-auth-url');
   await client.exchangeOpenAiCode({ sessionId: authorization.sessionId, code: 'code', state: authorization.state });
   assert.equal(calls[0].body.proxy_id, undefined);
   assert.deepEqual(calls[1].body, { session_id: 'session', code: 'code', state: 'expected' });

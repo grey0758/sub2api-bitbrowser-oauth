@@ -20,6 +20,12 @@ function normalizeBaseUrl(value) {
   return base;
 }
 
+function normalizeApiPrefix(value) {
+  const prefix = String(value || '/api/v1').trim();
+  if (!prefix.startsWith('/')) throw new TypeError('SUB2API_API_PREFIX must start with /');
+  return `/${prefix.replace(/^\/+|\/+$/g, '')}`;
+}
+
 function authHeaders({ token, apiKey, cookie } = {}) {
   const headers = { accept: 'application/json', 'content-type': 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -31,6 +37,7 @@ function authHeaders({ token, apiKey, cookie } = {}) {
 class Sub2ApiAdminClient {
   constructor({
     baseUrl = process.env.SUB2API_BASE_URL,
+    apiPrefix = process.env.SUB2API_API_PREFIX,
     token = process.env.SUB2API_ADMIN_TOKEN,
     apiKey = process.env.SUB2API_ADMIN_API_KEY,
     cookie = process.env.SUB2API_ADMIN_COOKIE,
@@ -39,6 +46,7 @@ class Sub2ApiAdminClient {
   } = {}) {
     if (typeof fetchImpl !== 'function') throw new Error('Node 18+ fetch is required');
     this.baseUrl = normalizeBaseUrl(baseUrl);
+    this.apiPrefix = normalizeApiPrefix(apiPrefix);
     this.token = token ? String(token).trim() : '';
     this.apiKey = apiKey ? String(apiKey).trim() : '';
     this.cookie = cookie ? String(cookie).trim() : '';
@@ -57,7 +65,7 @@ class Sub2ApiAdminClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      const response = await this.fetchImpl(`${this.baseUrl}${this.apiPrefix}${path}`, {
         method: 'POST',
         headers: authHeaders({ token: this.token, apiKey: this.apiKey, cookie: this.cookie }),
         body: JSON.stringify(body),
@@ -123,4 +131,4 @@ function parseCodeInput(value) {
   return { code, state: url.searchParams.get('state') || '' };
 }
 
-module.exports = { DEFAULT_BASE_URL, Sub2ApiAdminClient, Sub2ApiError, normalizeBaseUrl, parseCodeInput };
+module.exports = { DEFAULT_BASE_URL, Sub2ApiAdminClient, Sub2ApiError, normalizeBaseUrl, normalizeApiPrefix, parseCodeInput };

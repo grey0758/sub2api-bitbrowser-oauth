@@ -1,6 +1,7 @@
 # OAuth flow
 
-The deployed `admin/accounts` frontend currently uses these OpenAI endpoints:
+The deployed `admin/accounts` frontend uses `/api/v1` as its Axios base path;
+the helper adds that prefix to these OpenAI endpoints:
 
 1. `POST /admin/accounts/generate-auth-url` with `{}` or `{proxy_id}`.
 2. `POST /admin/accounts/exchange-code` with
