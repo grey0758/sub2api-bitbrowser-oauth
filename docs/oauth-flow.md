@@ -22,3 +22,8 @@ Do not substitute the older Grok/Gemini OAuth endpoints, write PostgreSQL
 directly, or infer account validity from a pool-level HTTP 200. Use the
 supported administrator API so the server applies its current account policy,
 proxy handling, and workspace-409 rule.
+
+The administrator API key is stored canonically in OpenBao at
+`projects/sub2api/prod/bitbrowser-oauth` under `admin_api_key`. The
+`ydy001` copy is an ACL-restricted, Git-ignored runtime file only; rotate it
+from OpenBao and never commit or print its value.

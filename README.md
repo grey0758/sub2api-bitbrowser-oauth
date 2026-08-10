@@ -23,6 +23,12 @@ Required runtime values:
 - one of `SUB2API_ADMIN_TOKEN`, `SUB2API_ADMIN_API_KEY`, or
   `SUB2API_ADMIN_COOKIE`
 
+The production `SUB2API_ADMIN_API_KEY` is canonical in OpenBao at
+`projects/sub2api/prod/bitbrowser-oauth` (KV mount `projects`, field
+`admin_api_key`). On `ydy001` it is materialized only as the ACL-restricted
+`.runtime/admin.env` file, which is ignored by Git. Do not copy that value into
+`.env.example`, source files, docs, or command output.
+
 ## Usage
 
 First perform a read-only exact-name check:
