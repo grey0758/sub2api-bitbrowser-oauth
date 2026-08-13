@@ -62,9 +62,13 @@ class BitBrowserClient {
     return Array.isArray(response?.data?.list) ? response.data.list : [];
   }
 
-  async openWindow(id) {
+  async openWindow(id, { args, loadExtensions, extractIp } = {}) {
     if (!id) throw new TypeError('BitBrowser window id is required');
-    const response = await this.post('/browser/open', { id });
+    const body = { id };
+    if (args !== undefined) body.args = args;
+    if (loadExtensions !== undefined) body.loadExtensions = loadExtensions;
+    if (extractIp !== undefined) body.extractIp = extractIp;
+    const response = await this.post('/browser/open', body);
     const ws = response?.data?.ws;
     if (!ws) throw new BitBrowserApiError('BitBrowser open response did not include a CDP websocket URL', { data: response });
     return { ...response.data, id };
@@ -72,7 +76,13 @@ class BitBrowserClient {
 
   async closeWindow(id) {
     if (!id) return;
-    await this.post('/browser/close', { id });
+    try {
+      await this.post('/browser/close', { id });
+    } catch (error) {
+      // BitBrowser can report the process-level ESRCH race after the window
+      // has already stopped. An explicit close request has still succeeded.
+      if (!/\bkill\s+ESRCH\b/i.test(String(error?.message || ''))) throw error;
+    }
   }
 }
 

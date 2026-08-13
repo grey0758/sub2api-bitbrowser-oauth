@@ -33,14 +33,19 @@ class FixedWindowController {
     return matches[0];
   }
 
-  async open({ url, waitUntil = 'domcontentloaded', timeoutMs = 60_000 } = {}) {
+  async open({ url, incognito = false, waitUntil = 'domcontentloaded', timeoutMs = 60_000 } = {}) {
     if (this.session) return this.session;
     const window = await this.findExact();
-    const opened = await this.client.openWindow(window.id);
+    const opened = await this.client.openWindow(window.id, incognito ? { args: ['--incognito'] } : {});
     const browser = await this.chromium.connectOverCDP(opened.ws, { timeout: this.connectTimeoutMs });
-    const context = browser.contexts()[0] || await browser.newContext();
+    // The launch argument only takes effect when BitBrowser starts the window.
+    // Create an isolated context as well so an already-open fixed window does
+    // not reuse cookies from an earlier account attempt.
+    const context = incognito
+      ? await browser.newContext()
+      : browser.contexts()[0] || await browser.newContext();
     const page = context.pages()[0] || await context.newPage();
-    this.session = new FixedWindowSession({ controller: this, browser, context, page, window });
+    this.session = new FixedWindowSession({ controller: this, browser, context, page, window, incognito });
     if (url) await page.goto(url, { waitUntil, timeout: timeoutMs });
     return this.session;
   }
@@ -55,12 +60,13 @@ class FixedWindowController {
 }
 
 class FixedWindowSession {
-  constructor({ controller, browser, context, page, window }) {
+  constructor({ controller, browser, context, page, window, incognito = false }) {
     this.controller = controller;
     this.browser = browser;
     this.context = context;
     this.page = page;
     this.window = window;
+    this.incognito = incognito;
   }
 
   async goto(url, options = {}) {
@@ -73,19 +79,71 @@ class FixedWindowSession {
 
   async waitForCallback({ timeoutMs = 10 * 60_000, pollMs = 500 } = {}) {
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      for (const page of this.context.pages()) {
-        const parsed = parseCallbackUrl(page.url());
-        if (parsed) return { ...parsed, page };
+    let settled = false;
+    let resolveCallback;
+    let rejectCallback;
+    const callbackPromise = new Promise((resolve, reject) => {
+      resolveCallback = resolve;
+      rejectCallback = reject;
+    });
+    const listeners = new Map();
+    const observePage = (page) => {
+      if (listeners.has(page)) return;
+      const onRequest = (request) => {
+        const parsed = parseCallbackUrl(request.url());
+        if (parsed && !settled) {
+          settled = true;
+          resolveCallback({ ...parsed, page });
+        }
+      };
+      const onFrameNavigated = (frame) => {
+        if (frame !== page.mainFrame()) return;
+        const parsed = parseCallbackUrl(frame.url());
+        if (parsed && !settled) {
+          settled = true;
+          resolveCallback({ ...parsed, page });
+        }
+      };
+      page.on('request', onRequest);
+      page.on('framenavigated', onFrameNavigated);
+      listeners.set(page, { onRequest, onFrameNavigated });
+    };
+    const cleanup = () => {
+      for (const [page, { onRequest, onFrameNavigated }] of listeners) {
+        page.off('request', onRequest);
+        page.off('framenavigated', onFrameNavigated);
       }
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      listeners.clear();
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      rejectCallback(new Error(`OAuth callback was not observed within ${Math.ceil(timeoutMs / 1000)} seconds`));
+    }, timeoutMs);
+    try {
+      while (!settled && Date.now() < deadline) {
+        for (const page of this.context.pages()) {
+          observePage(page);
+          const parsed = parseCallbackUrl(page.url());
+          if (parsed && !settled) {
+            settled = true;
+            resolveCallback({ ...parsed, page });
+            break;
+          }
+        }
+        if (!settled) await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+      return await callbackPromise;
+    } finally {
+      clearTimeout(timer);
+      cleanup();
     }
-    throw new Error(`OAuth callback was not observed within ${Math.ceil(timeoutMs / 1000)} seconds`);
   }
 
   async disconnect() {
     // Playwright's CDP close disconnects the client; it does not call the
     // BitBrowser /browser/close endpoint. Keep the named profile available.
+    if (this.incognito) await this.context.close().catch(() => {});
     await this.browser.close().catch(() => {});
   }
 }

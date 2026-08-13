@@ -34,6 +34,70 @@ function authHeaders({ token, apiKey, cookie } = {}) {
   return headers;
 }
 
+const OPENAI_CREDENTIAL_FIELDS = [
+  'refresh_token',
+  'id_token',
+  'email',
+  'chatgpt_account_id',
+  'chatgpt_user_id',
+  'organization_id',
+  'plan_type',
+  'subscription_expires_at',
+  'client_id',
+];
+
+function buildOpenAiCredentials(value) {
+  if (!value || typeof value !== 'object') {
+    throw new Sub2ApiError('Sub2API returned no OpenAI credential material');
+  }
+  if (typeof value.access_token !== 'string' || !value.access_token.trim()) {
+    throw new Sub2ApiError('Sub2API returned incomplete OpenAI credential material');
+  }
+  const expiresAtIsValid =
+    (typeof value.expires_at === 'string' && value.expires_at.trim()) ||
+    (typeof value.expires_at === 'number' && Number.isFinite(value.expires_at));
+  if (!expiresAtIsValid) {
+    throw new Sub2ApiError('Sub2API returned incomplete OpenAI credential material');
+  }
+
+  const credentials = {
+    access_token: value.access_token,
+    expires_at: value.expires_at,
+  };
+  for (const field of OPENAI_CREDENTIAL_FIELDS) {
+    if (value[field]) credentials[field] = value[field];
+  }
+  return credentials;
+}
+
+function buildOpenAiExtraInfo(value) {
+  const extra = {};
+  for (const field of ['email', 'name', 'privacy_mode']) {
+    if (value?.[field]) extra[field] = value[field];
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+function normalizeAccountPage(value) {
+  if (Array.isArray(value)) return { accounts: value, total: value.length };
+  if (!value || typeof value !== 'object') {
+    throw new Sub2ApiError('Sub2API returned an invalid account list');
+  }
+  const accounts = [value.items, value.accounts, value.list].find(Array.isArray);
+  if (!accounts) throw new Sub2ApiError('Sub2API returned an invalid account list');
+  const total = [value.total, value.count].find((item) => Number.isInteger(item) && item >= 0);
+  return { accounts, total };
+}
+
+function accountEmailCandidates(account) {
+  return [
+    account?.extra?.email_address,
+    account?.extra?.email,
+    account?.credentials?.email,
+    account?.parent_email,
+  ].filter((item) => typeof item === 'string' && item.trim());
+}
+
 class Sub2ApiAdminClient {
   constructor({
     baseUrl = process.env.SUB2API_BASE_URL,
@@ -60,17 +124,22 @@ class Sub2ApiAdminClient {
     }
   }
 
-  async post(path, body = {}) {
+  async request(method, path, { body, query } = {}) {
     this.assertCredentials();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetchImpl(`${this.baseUrl}${this.apiPrefix}${path}`, {
-        method: 'POST',
+      const url = new URL(`${this.baseUrl}${this.apiPrefix}${path}`);
+      for (const [key, value] of Object.entries(query || {})) {
+        if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+      }
+      const options = {
+        method,
         headers: authHeaders({ token: this.token, apiKey: this.apiKey, cookie: this.cookie }),
-        body: JSON.stringify(body),
         signal: controller.signal,
-      });
+      };
+      if (body !== undefined) options.body = JSON.stringify(body);
+      const response = await this.fetchImpl(url.toString(), options);
       let data;
       try { data = await response.json(); } catch (error) {
         throw new Sub2ApiError(`Sub2API returned non-JSON from ${path}`, { status: response.status, cause: error });
@@ -96,6 +165,14 @@ class Sub2ApiAdminClient {
     }
   }
 
+  async get(path, query) {
+    return this.request('GET', path, { query });
+  }
+
+  async post(path, body = {}) {
+    return this.request('POST', path, { body });
+  }
+
   async generateOpenAiAuthUrl({ proxyId } = {}) {
     const body = proxyId == null || proxyId === '' ? {} : { proxy_id: proxyId };
     const result = await this.post('/admin/openai/generate-auth-url', body);
@@ -118,6 +195,103 @@ class Sub2ApiAdminClient {
     if (proxyId != null && proxyId !== '') body.proxy_id = proxyId;
     return this.post('/admin/openai/exchange-code', body);
   }
+
+  async listAccounts({ page = 1, pageSize = 100 } = {}) {
+    return this.get('/admin/accounts', { page, page_size: pageSize });
+  }
+
+  async listAllAccounts({ pageSize = 100 } = {}) {
+    const size = Math.max(1, Math.min(100, Number(pageSize) || 100));
+    const accounts = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const listed = normalizeAccountPage(await this.listAccounts({ page, pageSize: size }));
+      accounts.push(...listed.accounts);
+      if (
+        listed.accounts.length < size ||
+        (listed.total !== undefined && page * size >= listed.total)
+      ) break;
+    }
+    return accounts;
+  }
+
+  async findOpenAiAccountByEmail(email, { pageSize = 100 } = {}) {
+    const expected = String(email || '').trim().toLowerCase();
+    if (!expected) throw new TypeError('email is required for account lookup');
+    const matches = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const listed = normalizeAccountPage(await this.listAccounts({ page, pageSize }));
+      for (const account of listed.accounts) {
+        if (
+          account?.platform === 'openai' &&
+          accountEmailCandidates(account).some((candidate) => candidate.trim().toLowerCase() === expected)
+        ) {
+          matches.push(account);
+        }
+      }
+      if (
+        listed.accounts.length < pageSize ||
+        (listed.total !== undefined && page * pageSize >= listed.total)
+      ) break;
+    }
+    if (matches.length > 1) {
+      throw new Sub2ApiError('Sub2API account lookup returned duplicate exact email matches');
+    }
+    return matches[0] || null;
+  }
+
+  async createAccount(body) {
+    return this.post('/admin/accounts', body);
+  }
+
+  async applyOAuthCredentials(accountId, body) {
+    if (accountId === undefined || accountId === null || accountId === '') {
+      throw new TypeError('accountId is required for OAuth credential application');
+    }
+    return this.post(`/admin/accounts/${encodeURIComponent(String(accountId))}/apply-oauth-credentials`, body);
+  }
+
+  async importOpenAiOAuthAccount({ email, exchangeResult, proxyId, verifyAttempts = 5 } = {}) {
+    const expectedEmail = String(email || '').trim();
+    if (!expectedEmail) throw new TypeError('email is required for OpenAI account import');
+    if (
+      typeof exchangeResult?.email !== 'string' ||
+      exchangeResult.email.trim().toLowerCase() !== expectedEmail.toLowerCase()
+    ) {
+      throw new Sub2ApiError('OpenAI OAuth identity did not match the requested account');
+    }
+
+    const credentials = buildOpenAiCredentials(exchangeResult);
+    const extra = buildOpenAiExtraInfo(exchangeResult);
+    const existing = await this.findOpenAiAccountByEmail(expectedEmail);
+    let action;
+    if (existing) {
+      await this.applyOAuthCredentials(existing.id, {
+        type: 'oauth',
+        credentials,
+        ...(extra ? { extra } : {}),
+      });
+      action = 'updated';
+    } else {
+      const body = {
+        name: expectedEmail,
+        platform: 'openai',
+        type: 'oauth',
+        credentials,
+        ...(extra ? { extra } : {}),
+      };
+      if (proxyId !== undefined && proxyId !== null && proxyId !== '') body.proxy_id = proxyId;
+      await this.createAccount(body);
+      action = 'created';
+    }
+
+    const attempts = Math.max(1, Number(verifyAttempts) || 1);
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const verified = await this.findOpenAiAccountByEmail(expectedEmail);
+      if (verified) return { action, accountId: verified.id };
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Sub2ApiError('Sub2API account import was not visible in the account list after the write');
+  }
 }
 
 function parseCodeInput(value) {
@@ -131,4 +305,15 @@ function parseCodeInput(value) {
   return { code, state: url.searchParams.get('state') || '' };
 }
 
-module.exports = { DEFAULT_BASE_URL, Sub2ApiAdminClient, Sub2ApiError, normalizeBaseUrl, normalizeApiPrefix, parseCodeInput };
+module.exports = {
+  DEFAULT_BASE_URL,
+  Sub2ApiAdminClient,
+  Sub2ApiError,
+  accountEmailCandidates,
+  buildOpenAiCredentials,
+  buildOpenAiExtraInfo,
+  normalizeAccountPage,
+  normalizeBaseUrl,
+  normalizeApiPrefix,
+  parseCodeInput,
+};

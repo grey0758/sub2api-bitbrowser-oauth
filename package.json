@@ -9,10 +9,23 @@
   },
   "scripts": {
     "check": "node bin/sub2api-bitbrowser-oauth.js check",
-    "start": "node bin/sub2api-bitbrowser-oauth.js start",
-    "run": "node bin/sub2api-bitbrowser-oauth.js run",
-    "test": "node --test",
-    "syntax": "node --check bin/sub2api-bitbrowser-oauth.js && node --check src/bitbrowser/client.js && node --check src/bitbrowser/window-controller.js && node --check src/sub2api/admin-client.js && node --check src/oauth/flow.js && node --check src/runtime-env.js"
+    "start": "node bin/sub2api-bitbrowser-oauth.js start --incognito",
+    "run": "node bin/sub2api-bitbrowser-oauth.js run --incognito",
+    "import-account": "node bin/sub2api-bitbrowser-oauth.js import-account --incognito",
+    "import-next": "node bin/sub2api-bitbrowser-oauth.js import-next --incognito",
+    "inventory-sync-accounts": "node bin/sub2api-bitbrowser-oauth.js inventory-sync-accounts",
+    "inventory-import-next": "node bin/sub2api-bitbrowser-oauth.js inventory-import-next --incognito",
+    "account-health-audit": "node bin/sub2api-bitbrowser-oauth.js account-health-audit",
+    "reauthorize-errors": "node bin/sub2api-bitbrowser-oauth.js reauthorize-errors --incognito",
+    "pool-status": "node bin/sub2api-bitbrowser-oauth.js pool-status",
+    "pool-import-phones": "node bin/sub2api-bitbrowser-oauth.js pool-import-phones",
+    "pool-import-accounts": "node bin/sub2api-bitbrowser-oauth.js pool-import-accounts",
+    "pool-reset-phone-cooldowns": "node bin/sub2api-bitbrowser-oauth.js pool-reset-phone-cooldowns",
+    "pool-correct-invalid-phone": "node bin/sub2api-bitbrowser-oauth.js pool-correct-invalid-phone",
+    "pool-enable-resend": "node bin/sub2api-bitbrowser-oauth.js pool-enable-resend",
+    "test": "node --test test/unit.test.js",
+    "test:dependencies": "node test/real-dependency-check.js",
+    "syntax": "node --check bin/sub2api-bitbrowser-oauth.js && node --check src/bitbrowser/client.js && node --check src/bitbrowser/window-controller.js && node --check src/sub2api/admin-client.js && node --check src/sub2api/account-health.js && node --check src/oauth/flow.js && node --check src/oauth/account-import.js && node --check src/pool/local-import-pool.js && node --check src/workstation/automation-client.js && node --check src/workstation/inventory-import.js && node --check src/runtime-env.js && node --check test/real-dependency-check.js"
   },
   "engines": { "node": ">=18.17" },
   "dependencies": {

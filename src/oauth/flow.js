@@ -9,9 +9,9 @@ class OAuthFlow {
     this.browser = browser;
   }
 
-  async start({ proxyId } = {}) {
+  async start({ proxyId, incognito = false } = {}) {
     const authorization = await this.sub2api.generateOpenAiAuthUrl({ proxyId });
-    const session = await this.browser.open({ url: authorization.authUrl });
+    const session = await this.browser.open({ url: authorization.authUrl, incognito });
     return { authorization, session };
   }
 
@@ -29,8 +29,8 @@ class OAuthFlow {
     });
   }
 
-  async run({ proxyId, timeoutMs = 10 * 60_000 } = {}) {
-    const started = await this.start({ proxyId });
+  async run({ proxyId, incognito = false, timeoutMs = 10 * 60_000 } = {}) {
+    const started = await this.start({ proxyId, incognito });
     try {
       const callback = await started.session.waitForCallback({ timeoutMs });
       const result = await this.exchange({ authorization: started.authorization, input: callback.state ? `http://localhost:1455/auth/callback?code=${encodeURIComponent(callback.code)}&state=${encodeURIComponent(callback.state)}` : callback.code, proxyId });
