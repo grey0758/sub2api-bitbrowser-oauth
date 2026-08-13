@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sub2API BitBrowser OAuth"
+  short_description: "Open OAuth in a fixed BitBrowser window"
+  default_prompt: "Use the Sub2API BitBrowser OAuth operator to generate an OpenAI auth URL, open it in us001_codex, and safely exchange the callback."

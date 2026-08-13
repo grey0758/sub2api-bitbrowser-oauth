@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.runtime/
+WORKSTATION_AUTOMATION_API.md
+*.log
+coverage/
+.DS_Store
