@@ -67,3 +67,10 @@ Sub2API's supported administrator API.
 See [docs/oauth-flow.md](docs/oauth-flow.md) and
 [docs/source-lineage.md](docs/source-lineage.md) for the durable workflow and
 Curator context.
+
+The same workstation project also carries the sanitized integration contract
+for the independently authenticated Workstation account and phone inventory
+API. See
+[docs/workstation-inventory-automation.md](docs/workstation-inventory-automation.md).
+The secret-bearing caller document stays outside Git as
+`WORKSTATION_AUTOMATION_API.md` on `ydy001`.
