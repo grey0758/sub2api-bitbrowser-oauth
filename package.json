@@ -14,6 +14,8 @@
     "import-account": "node bin/sub2api-bitbrowser-oauth.js import-account --incognito",
     "import-next": "node bin/sub2api-bitbrowser-oauth.js import-next --incognito",
     "inventory-sync-accounts": "node bin/sub2api-bitbrowser-oauth.js inventory-sync-accounts",
+    "inventory-ban-pool-status": "node bin/sub2api-bitbrowser-oauth.js inventory-ban-pool-status",
+    "inventory-ban-and-replace": "node bin/sub2api-bitbrowser-oauth.js inventory-ban-and-replace",
     "inventory-import-next": "node bin/sub2api-bitbrowser-oauth.js inventory-import-next --incognito",
     "account-health-audit": "node bin/sub2api-bitbrowser-oauth.js account-health-audit",
     "reauthorize-errors": "node bin/sub2api-bitbrowser-oauth.js reauthorize-errors --incognito",

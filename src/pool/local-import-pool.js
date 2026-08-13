@@ -14,6 +14,8 @@ const POOL_VERSION = 1;
 const PHONE_COOLDOWN_MS = 45 * 60_000;
 const DEFAULT_POOL_FILE = path.resolve(__dirname, '..', '..', '.runtime', 'import-pool.dpapi');
 const DPAPI_PREFIX = 'dpapi-v1:';
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
+const BAN_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 class LocalImportPoolError extends Error {
   constructor(message, { code, cause } = {}) {
@@ -216,6 +218,32 @@ function normalizeSnapshot(value) {
         typeof claim.phoneId !== 'string' ||
         typeof claim.phoneNumber !== 'string' ||
         typeof claim.claimedAt !== 'string'
+      ))
+    )) throw new LocalImportPoolError('Local import pool is invalid', { code: 'pool_invalid' });
+    const replacement = account.accountReplacement;
+    if (replacement !== undefined && replacement !== null && (
+      typeof replacement !== 'object' ||
+      !['pending', 'completed'].includes(replacement.status) ||
+      !IDEMPOTENCY_KEY_PATTERN.test(replacement.idempotencyKey) ||
+      !Number.isFinite(replacement.createdAt) ||
+      (replacement.status === 'completed' && (
+        !BAN_ID_PATTERN.test(replacement.banId) ||
+        !Number.isFinite(replacement.completedAt) ||
+        typeof replacement.replayed !== 'boolean'
+      ))
+    )) throw new LocalImportPoolError('Local import pool is invalid', { code: 'pool_invalid' });
+    if (account.accountReplacementHistory !== undefined && (
+      !Array.isArray(account.accountReplacementHistory) ||
+      account.accountReplacementHistory.length > 20 ||
+      account.accountReplacementHistory.some((entry) => (
+        !entry ||
+        typeof entry !== 'object' ||
+        !IDEMPOTENCY_KEY_PATTERN.test(entry.idempotencyKey) ||
+        !Number.isFinite(entry.createdAt) ||
+        !Number.isFinite(entry.rejectedAt) ||
+        typeof entry.reason !== 'string' ||
+        entry.reason.length < 1 ||
+        entry.reason.length > 64
       ))
     )) throw new LocalImportPoolError('Local import pool is invalid', { code: 'pool_invalid' });
   }
@@ -455,6 +483,84 @@ class LocalImportPoolStore {
       account.lastOutcome = 'in_progress';
       account.nextAttemptAt = null;
       return { ...account, phoneClaim: account.phoneClaim ? { ...account.phoneClaim } : null };
+    });
+  }
+
+  async findAccountByEmail(email) {
+    const expected = String(email || '').trim().toLowerCase();
+    if (!expected) throw new TypeError('email is required');
+    const snapshot = await this.load();
+    const matches = snapshot.accounts.filter((item) => item.email.trim().toLowerCase() === expected);
+    if (matches.length > 1) {
+      throw new LocalImportPoolError('Local account email is ambiguous', { code: 'account_ambiguous' });
+    }
+    return matches[0] ? { id: matches[0].id, email: matches[0].email } : null;
+  }
+
+  async ensureAccountReplacement(accountId, idempotencyKey) {
+    if (!IDEMPOTENCY_KEY_PATTERN.test(String(idempotencyKey || ''))) {
+      throw new TypeError('idempotencyKey must be 16 to 128 supported characters');
+    }
+    return this.update((snapshot) => {
+      const account = snapshot.accounts.find((item) => item.id === accountId);
+      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      if (account.accountReplacement) {
+        return { email: account.email, replacement: { ...account.accountReplacement } };
+      }
+      account.accountReplacement = {
+        status: 'pending',
+        idempotencyKey,
+        createdAt: this.now(),
+      };
+      return { email: account.email, replacement: { ...account.accountReplacement } };
+    });
+  }
+
+  async recordAccountReplacement(accountId, { idempotencyKey, banId, replayed }) {
+    if (!IDEMPOTENCY_KEY_PATTERN.test(String(idempotencyKey || ''))) {
+      throw new TypeError('idempotencyKey must be 16 to 128 supported characters');
+    }
+    if (!BAN_ID_PATTERN.test(String(banId || ''))) throw new TypeError('banId is invalid');
+    if (typeof replayed !== 'boolean') throw new TypeError('replayed must be a boolean');
+    return this.update((snapshot) => {
+      const account = snapshot.accounts.find((item) => item.id === accountId);
+      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      if (
+        !account.accountReplacement ||
+        account.accountReplacement.idempotencyKey !== idempotencyKey
+      ) {
+        throw new LocalImportPoolError('Local account replacement state did not match the response', {
+          code: 'account_replacement_state_mismatch',
+        });
+      }
+      account.accountReplacement = {
+        ...account.accountReplacement,
+        status: 'completed',
+        banId,
+        replayed,
+        completedAt: this.now(),
+      };
+      account.inventoryPresent = false;
+      account.lastOutcome = 'account_banned_replaced';
+      return { ...account.accountReplacement };
+    });
+  }
+
+  async rejectAccountReplacement(accountId, reason = 'replacement_rejected') {
+    await this.update((snapshot) => {
+      const account = snapshot.accounts.find((item) => item.id === accountId);
+      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      if (!account.accountReplacement || account.accountReplacement.status !== 'pending') return;
+      account.accountReplacementHistory = Array.isArray(account.accountReplacementHistory)
+        ? account.accountReplacementHistory.slice(-19)
+        : [];
+      account.accountReplacementHistory.push({
+        idempotencyKey: account.accountReplacement.idempotencyKey,
+        createdAt: account.accountReplacement.createdAt,
+        rejectedAt: this.now(),
+        reason: String(reason || 'replacement_rejected').slice(0, 64),
+      });
+      account.accountReplacement = null;
     });
   }
 

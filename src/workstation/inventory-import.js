@@ -1,7 +1,11 @@
 'use strict';
 
 const { LocalImportPoolError } = require('../pool/local-import-pool');
-const { WorkstationAutomationError, generatePhoneClaimKey } = require('./automation-client');
+const {
+  WorkstationAutomationError,
+  generateAccountReplacementKey,
+  generatePhoneClaimKey,
+} = require('./automation-client');
 
 class WorkstationInventoryImportCoordinator {
   constructor({ client, pool, minAgeMinutes = 45 } = {}) {
@@ -21,6 +25,33 @@ class WorkstationInventoryImportCoordinator {
     const sync = await this.syncAccounts();
     const account = await this.pool.beginNextAccountAttempt({ inventoryOnly: true });
     return { sync, account };
+  }
+
+  async replaceBannedAccount(accountId) {
+    const target = await this.pool.ensureAccountReplacement(accountId, generateAccountReplacementKey());
+    if (target.replacement.status === 'completed') {
+      const sync = await this.syncAccounts();
+      return { replayed: true, banId: target.replacement.banId, sync };
+    }
+    let result;
+    try {
+      result = await this.client.banAndReplaceAccount({
+        account: target.email,
+        idempotencyKey: target.replacement.idempotencyKey,
+      });
+    } catch (error) {
+      if (error instanceof WorkstationAutomationError && !error.outcomeUnknown && !error.retryable) {
+        await this.pool.rejectAccountReplacement(accountId, error.code || `http_${error.status || 0}`);
+      }
+      throw error;
+    }
+    await this.pool.recordAccountReplacement(accountId, {
+      idempotencyKey: target.replacement.idempotencyKey,
+      banId: result.bannedAccount.id,
+      replayed: result.replayed,
+    });
+    const sync = await this.syncAccounts();
+    return { replayed: result.replayed, banId: result.bannedAccount.id, sync };
   }
 
   async preparePhone(accountId) {

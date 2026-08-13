@@ -79,6 +79,31 @@ pool still owns SMS access URLs, per-phone resend policy, and attempt state.
 Phone invalidation is written locally before the remote unavailable PATCH so a
 failed status request remains recoverable on the next attempt.
 
+## Workstation banned-account replacement
+
+`inventory-ban-pool-status` retrieves only validated status counts. The client
+strips account import lines and replacement lines from every ban-pool record
+before returning data to the CLI.
+
+`inventory-ban-and-replace -- --email ...` is the explicit bridge from an
+OpenAI provider-ban classification to the Workstation account state machine.
+The exact local email is the selector, while Workstation atomically validates
+`pool/imported`, selects the oldest `pool/available` replacement, and copies
+the machine and pool assignment. The local DPAPI record stores the idempotency
+key before the request and reuses it after an unknown outcome.
+
+`reauthorize-errors -- --replace-banned` uses this bridge only for an
+`account_banned` result observed during that invocation. Without the flag,
+reauthorization remains status-only. After a completed replacement the client
+retrieves fresh import lines so the promoted account becomes locally pending;
+no replacement credentials or ban-pool response bodies are printed.
+
+The pending-replacement extraction endpoint is available only as a validated
+library method with a required private `consume` callback. There is no CLI
+because its response contains complete account material and must be handed
+directly to an approved private destination before only redacted metadata is
+returned to the caller.
+
 Do not substitute the older Grok/Gemini OAuth endpoints, write PostgreSQL
 directly, or infer account creation from exchange HTTP 200. Use the supported
 administrator API and exact-email postcondition so the server applies its

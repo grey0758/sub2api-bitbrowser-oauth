@@ -41,6 +41,13 @@ description: Use this skill when generating or exchanging a Sub2API OpenAI OAuth
 10. Restore an invalid-marked phone only after explicit operator confirmation
     through the dedicated correction command, with correction audit fields.
     Change queued-phone resend policy only through its explicit policy command.
+11. Replace a provider-banned Workstation account only after an explicit
+    `inventory-ban-and-replace --email` request or `reauthorize-errors
+    --replace-banned`. Persist its idempotency key in DPAPI before the request,
+    reuse it after an unknown result, and never print ban or replacement rows.
+12. Treat pending-replacement extraction as secret-bearing. The library may
+    call it only with an approved private consume callback, then redact its
+    returned metadata. Do not expose a CLI that prints or discards the batch.
 
 ## Verification and failure handling
 

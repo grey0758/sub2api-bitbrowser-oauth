@@ -153,6 +153,8 @@ through the API contract in `WORKSTATION_AUTOMATION_API.md`:
 ```bash
 npm run inventory-sync-accounts
 npm run inventory-import-next
+npm run inventory-ban-pool-status
+npm run inventory-ban-and-replace -- --email account@example.com
 npm run test:dependencies
 ```
 
@@ -185,11 +187,27 @@ default no-resend policy. After two failed SMS rounds, the integration marks
 the claimed remote phone unavailable and preserves pending sync state if that
 status update fails.
 
+`inventory-ban-pool-status` reads only redacted counts from the retained ban
+pool. `inventory-ban-and-replace -- --email ...` is the explicit account
+replacement operation: it saves a stable idempotency key in DPAPI before the
+request, lets Workstation atomically select the replacement, and then
+resynchronizes the active account inventory. An unknown result keeps the key
+for replay; a definitive business rejection archives the attempt. Neither
+command returns or prints banned or replacement credential lines.
+
+The client library validates the documented one-time pending-replacement batch
+endpoint but deliberately exposes no CLI for it. Calling it requires a private
+`consume` callback that receives the complete in-memory batch before the method
+returns only redacted metadata. The callback must write to an approved private
+destination; silently discarding or printing the batch would break the API
+contract.
+
 ## Error-account health and reauthorization
 
 ```bash
 npm run account-health-audit
 npm run reauthorize-errors -- --limit 1
+npm run reauthorize-errors -- --email account@example.com --replace-banned
 ```
 
 `account-health-audit` reads the supported administrator account list and saves
@@ -204,6 +222,13 @@ the whole batch at the first OpenAI rate-limit response. A successful run still
 requires OAuth state validation, exchange, and the exact-email Sub2API account
 postcondition. A banned/deactivated OpenAI page is recorded as `account_banned`
 and is never retried automatically.
+
+`--replace-banned` is an explicit Workstation mutation opt-in. It applies only
+when the current login attempt returns `account_banned`, then uses the same
+DPAPI-backed replacement coordinator and synchronizes the promoted replacement
+into the local pending queue. Without the flag, reauthorization does not mutate
+Workstation inventory. Historical banned outcomes never trigger a replacement
+automatically.
 
 If the opened OpenAI authorization page shows `Oops, an error occurred` with
 `Route Error (500 Internal Server Error)`, the importer treats the OAuth session
@@ -235,9 +260,10 @@ directly. The explicit OAuth account create/update is performed only through
 Sub2API's administrator API, so account policy and workspace-409 handling remain
 server-side.
 
-The inventory integration changes only its documented account-read and phone
-claim/unavailable endpoints. It does not write account rows in the Workstation
-service or change DNS, SSH, Tailscale, Mihomo, NewAPI, Cloudflare, proxy
+The inventory integration changes only its documented account and phone
+inventory endpoints. Account replacement stays atomic and server-owned; the
+local tool does not edit Workstation account files directly. It does not change
+DNS, SSH, Tailscale, Mihomo, NewAPI, Cloudflare, proxy
 bindings, or production containers.
 
 See [docs/oauth-flow.md](docs/oauth-flow.md) and

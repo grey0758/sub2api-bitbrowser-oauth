@@ -14,6 +14,7 @@ const { WorkstationAutomationClient } = require('../src/workstation/automation-c
 const { WorkstationInventoryImportCoordinator } = require('../src/workstation/inventory-import');
 
 const FAKE_ACCOUNT_LINE = 'dependency-test@example.invalid|not-a-real-password|JBSWY3DPEHPK3PXP';
+const FAKE_REPLACEMENT_LINE = 'replacement-test@example.invalid|not-a-real-password|JBSWY3DPEHPK3PXP';
 const FAKE_PHONE = '+15550102020';
 const FAKE_SMS_URL = 'https://sms.example.invalid/access';
 
@@ -38,6 +39,11 @@ async function readBody(request) {
 
 async function createFakeInventoryServer() {
   const state = {
+    accountLine: FAKE_ACCOUNT_LINE,
+    accountSourceVersion: 1,
+    accountReplacements: new Map(),
+    banPool: [],
+    replacementRequests: 0,
     bindingCount: 0,
     unavailable: false,
     claims: new Map(),
@@ -54,11 +60,59 @@ async function createFakeInventoryServer() {
       if (request.method === 'GET' && url.pathname === '/api/v1/account-inventory/import-lines') {
         json(response, 200, {
           version: 1,
-          source_version: 1,
+          source_version: state.accountSourceVersion,
           updated_at: '2026-08-12T00:00:00Z',
           count: 1,
-          import_lines: [FAKE_ACCOUNT_LINE],
+          import_lines: [state.accountLine],
         });
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/api/v1/account-inventory/ban-pool') {
+        const bannedCount = state.banPool.filter((item) => item.status === 'banned').length;
+        json(response, 200, {
+          version: 2,
+          updated_at: '2026-08-12T00:00:00Z',
+          count: state.banPool.length,
+          banned_count: bannedCount,
+          banned_replaced_count: state.banPool.length - bannedCount,
+          pending_replacement_count: bannedCount,
+          accounts: state.banPool,
+        });
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/api/v1/account-inventory/ban-and-replace') {
+        const key = String(request.headers['idempotency-key'] || '');
+        const previous = state.accountReplacements.get(key);
+        if (previous) {
+          json(response, 200, { ...previous, replayed: true });
+          return;
+        }
+        const body = await readBody(request);
+        if (body.account !== 'dependency-test@example.invalid') {
+          json(response, 404, { error: 'account_not_found' });
+          return;
+        }
+        state.replacementRequests += 1;
+        const bannedAccount = {
+          id: 'dependency-test-ban',
+          status: 'banned',
+          banned_at: '2026-08-12T00:03:00Z',
+          replaced_at: null,
+          status_changed_at: '2026-08-12T00:03:00Z',
+          account_import_line: FAKE_ACCOUNT_LINE,
+          replacement_import_line: FAKE_REPLACEMENT_LINE,
+        };
+        state.banPool.push(bannedAccount);
+        state.accountLine = FAKE_REPLACEMENT_LINE;
+        state.accountSourceVersion += 1;
+        const result = {
+          version: 2,
+          updated_at: '2026-08-12T00:03:00Z',
+          replayed: false,
+          banned_account: bannedAccount,
+        };
+        state.accountReplacements.set(key, result);
+        json(response, 200, result);
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/v1/phone-inventory/eligible') {
@@ -169,6 +223,9 @@ async function runIsolatedFakeLifecycle() {
       reason: 'dependency_test_cleanup',
     });
     await pool.markAccountImported(selected.account.id);
+    const replacement = await coordinator.replaceBannedAccount(selected.account.id);
+    const replay = await coordinator.replaceBannedAccount(selected.account.id);
+    const banPool = await coordinator.client.getBanPool();
 
     const stored = await fs.promises.readFile(file, 'utf8');
     assert.equal(stored.includes('dependency-test@example.invalid'), false);
@@ -177,6 +234,13 @@ async function runIsolatedFakeLifecycle() {
     assert.equal(fake.state.bindingCount, 1);
     assert.equal(fake.state.unavailableUpdates, 1);
     assert.equal(fake.state.unavailable, true);
+    assert.equal(fake.state.replacementRequests, 1);
+    assert.equal(replacement.replayed, false);
+    assert.equal(replacement.sync.added, 1);
+    assert.equal(replay.replayed, true);
+    assert.equal(fake.state.replacementRequests, 1);
+    assert.equal(banPool.pendingReplacementCount, 1);
+    assert.equal(JSON.stringify(banPool).includes('not-a-real-password'), false);
   } finally {
     await new Promise((resolve) => fake.server.close(resolve));
     const resolvedRoot = path.resolve(runtimeRoot);
@@ -192,8 +256,11 @@ async function runIsolatedFakeLifecycle() {
 async function runProductionReadOnlyChecks() {
   const workstation = new WorkstationAutomationClient();
   const inventory = await workstation.getAccountImportLines();
+  const banPool = await workstation.getBanPool();
   const eligible = await workstation.getEligiblePhones({ minAgeMinutes: 45, limit: 1 });
   assert.equal(inventory.count, inventory.importLines.length);
+  assert.equal(banPool.count, banPool.bannedCount + banPool.bannedReplacedCount);
+  assert.equal(banPool.pendingReplacementCount, banPool.bannedCount);
 
   loadRuntimeEnv();
   const credentialCount = [
@@ -207,7 +274,12 @@ async function runProductionReadOnlyChecks() {
 
   const window = await new FixedWindowController().findExact();
   assert.equal(window.name, 'us001_codex');
-  return { inventoryCount: inventory.count, eligibleCount: eligible.length };
+  return {
+    inventoryCount: inventory.count,
+    banPoolCount: banPool.count,
+    pendingReplacementCount: banPool.pendingReplacementCount,
+    eligibleCount: eligible.length,
+  };
 }
 
 async function main() {
@@ -215,6 +287,7 @@ async function main() {
   const production = await runProductionReadOnlyChecks();
   console.log(
     `Dependency check passed: isolated fake lifecycle cleaned; production account inventory=${production.inventoryCount}; ` +
+    `ban pool=${production.banPoolCount}; pending replacements=${production.pendingReplacementCount}; ` +
     `eligible phones=${production.eligibleCount}; Sub2API and us001_codex reachable.`
   );
 }

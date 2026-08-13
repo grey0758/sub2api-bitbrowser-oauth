@@ -41,6 +41,7 @@ const { loadRuntimeEnv, parseRuntimeEnv } = require('../src/runtime-env');
 const {
   WorkstationAutomationClient,
   WorkstationAutomationError,
+  generateAccountReplacementKey,
   generatePhoneClaimKey,
 } = require('../src/workstation/automation-client');
 const { WorkstationInventoryImportCoordinator } = require('../src/workstation/inventory-import');
@@ -246,6 +247,141 @@ test('Workstation malformed successful claim responses remain retryable with the
       error.retryable === true
     )
   );
+});
+
+test('Workstation account inventory state APIs validate and redact secret-bearing records', async () => {
+  const calls = [];
+  const client = new WorkstationAutomationClient({
+    token: 'runtime-only',
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      const parsed = new URL(url);
+      if (init.method === 'GET' && parsed.pathname.endsWith('/account-inventory/ban-pool')) {
+        return new Response(JSON.stringify({
+          version: 2,
+          updated_at: '2026-08-13T08:15:09Z',
+          count: 1,
+          banned_count: 1,
+          banned_replaced_count: 0,
+          pending_replacement_count: 1,
+          accounts: [{
+            id: 'ban-example-01',
+            status: 'banned',
+            banned_at: '2026-08-13T08:15:09Z',
+            replaced_at: null,
+            status_changed_at: '2026-08-13T08:15:09Z',
+            account_import_line: 'secret@example.com|password|JBSWY3DPEHPK3PXP',
+            replacement_import_line: 'replacement@example.com|password|JBSWY3DPEHPK3PXP',
+          }],
+        }), { status: 200 });
+      }
+      if (init.method === 'POST' && parsed.pathname.endsWith('/account-inventory/ban-and-replace')) {
+        return new Response(JSON.stringify({
+          version: 2,
+          updated_at: '2026-08-13T08:15:09Z',
+          replayed: false,
+          banned_account: {
+            id: 'ban-example-01',
+            status: 'banned',
+            account_import_line: 'secret@example.com|password|JBSWY3DPEHPK3PXP',
+          },
+        }), { status: 200 });
+      }
+      if (init.method === 'POST' && parsed.pathname.endsWith('/ban-pool/extract-pending-replacements')) {
+        return new Response(JSON.stringify({
+          version: 2,
+          updated_at: '2026-08-13T08:16:09Z',
+          replayed: false,
+          batch_id: 'batch-example-01',
+          extracted_at: '2026-08-13T08:16:09Z',
+          count: 1,
+          accounts: [{
+            id: 'ban-example-01',
+            status: 'banned_replaced',
+            account_import_line: 'secret@example.com|password|JBSWY3DPEHPK3PXP',
+          }],
+        }), { status: 200 });
+      }
+      if (init.method === 'PATCH' && parsed.pathname.endsWith('/account-inventory/ban-pool/ban-example-01')) {
+        return new Response(JSON.stringify({
+          version: 2,
+          updated_at: '2026-08-13T08:17:09Z',
+          already_banned_replaced: false,
+          banned_account: { id: 'ban-example-01', status: 'banned_replaced' },
+        }), { status: 200 });
+      }
+      throw new Error('unexpected request');
+    },
+  });
+  const replacementKey = generateAccountReplacementKey();
+  const extractionKey = 'replacement-batch-example-0001';
+  const pool = await client.getBanPool();
+  const replacement = await client.banAndReplaceAccount({
+    account: 'secret@example.com',
+    idempotencyKey: replacementKey,
+  });
+  let consumedBatch;
+  const extraction = await client.extractPendingReplacements({
+    idempotencyKey: extractionKey,
+    consume: async (batch) => { consumedBatch = batch; },
+  });
+  const updated = await client.markBanRecordReplaced('ban-example-01');
+  assert.equal(pool.pendingReplacementCount, 1);
+  assert.deepEqual(Object.keys(pool.accounts[0]).sort(), [
+    'bannedAt', 'id', 'replacedAt', 'status', 'statusChangedAt',
+  ]);
+  assert.equal(replacement.bannedAccount.id, 'ban-example-01');
+  assert.equal(extraction.batchId, 'batch-example-01');
+  assert.equal(consumedBatch.accounts[0].account_import_line.includes('password'), true);
+  assert.equal(updated.bannedAccount.status, 'banned_replaced');
+  assert.equal(JSON.stringify({ pool, replacement, extraction, updated }).includes('password'), false);
+  assert.equal(calls[1].init.headers['idempotency-key'], replacementKey);
+  assert.deepEqual(JSON.parse(calls[1].init.body), { account: 'secret@example.com' });
+  assert.equal(calls[2].init.headers['idempotency-key'], extractionKey);
+  await assert.rejects(
+    () => client.extractPendingReplacements({ idempotencyKey: extractionKey }),
+    /consume callback is required/
+  );
+  await assert.rejects(
+    () => client.extractPendingReplacements({
+      idempotencyKey: extractionKey,
+      consume: async () => { throw new Error('private sink unavailable'); },
+    }),
+    (error) => (
+      error instanceof WorkstationAutomationError &&
+      error.outcomeUnknown === true &&
+      error.retryable === true &&
+      !error.message.includes('private sink unavailable')
+    )
+  );
+});
+
+test('Workstation phone target-state update validates count and availability', async () => {
+  const calls = [];
+  const client = new WorkstationAutomationClient({
+    token: 'runtime-only',
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({
+        version: 1,
+        updated_at: '2026-08-13T08:15:09Z',
+        phone: {
+          id: 'phone-example-01',
+          number: '+14109824518',
+          unavailable: true,
+          binding_count: 3,
+          binding_limit: 3,
+          last_binding_at: '2026-08-13T08:15:09Z',
+          binding_events: [],
+        },
+      }), { status: 200 });
+    },
+  });
+  const result = await client.updatePhone('phone-example-01', { bindingCount: 3, unavailable: true });
+  assert.equal(result.phone.bindingCount, 3);
+  assert.deepEqual(JSON.parse(calls[0].init.body), { binding_count: 3, unavailable: true });
+  await assert.rejects(() => client.updatePhone('phone-example-01', {}), /is required/);
+  await assert.rejects(() => client.updatePhone('phone-example-01', { bindingCount: 4 }), /0 to 3/);
 });
 
 test('exact window matching does not select similar names or deleted windows', () => {
@@ -487,6 +623,8 @@ test('CLI accepts and documents incognito mode', () => {
   assert.match(usage(), /import-account/);
   assert.match(usage(), /import-next/);
   assert.match(usage(), /inventory-sync-accounts/);
+  assert.match(usage(), /inventory-ban-pool-status/);
+  assert.match(usage(), /inventory-ban-and-replace/);
   assert.match(usage(), /inventory-import-next/);
   assert.match(usage(), /account-health-audit/);
   assert.match(usage(), /reauthorize-errors/);
@@ -494,6 +632,11 @@ test('CLI accepts and documents incognito mode', () => {
   assert.match(usage(), /pool-reset-phone-cooldowns/);
   assert.match(usage(), /pool-correct-invalid-phone/);
   assert.match(usage(), /pool-enable-resend/);
+  assert.deepEqual(parseArgs(['reauthorize-errors', '--email', 'account@example.com', '--replace-banned']), {
+    command: 'reauthorize-errors',
+    email: 'account@example.com',
+    replaceBanned: true,
+  });
 });
 
 test('OpenAI account runtime values stay process-only and phone fields are lazy', () => {
@@ -1073,6 +1216,121 @@ test('Workstation inventory coordinator reuses a persisted claim key after an un
     assert.equal(prepared.allowSmsResend, false);
     assert.equal(claimKeys[0], claimKeys[1]);
     assert.equal((await store.getAccountPhoneClaim(selected.account.id)).status, 'claimed');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Workstation replacement coordinator reuses a DPAPI idempotency key and syncs the promoted account', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-inventory-replacement-'));
+  const file = path.join(directory, 'pool.dpapi');
+  const protect = async (plainText) => Buffer.from(plainText, 'utf8').toString('base64');
+  const unprotect = async (cipherText) => Buffer.from(cipherText, 'base64').toString('utf8');
+  const store = new LocalImportPoolStore({ file, protect, unprotect, now: () => 1_000_000 });
+  const replacementKeys = [];
+  let attempts = 0;
+  const client = {
+    async getAccountImportLines() {
+      return {
+        importLines: ['replacement@example.com|new-password|JBSWY3DPEHPK3PXP'],
+        sourceVersion: 4,
+        updatedAt: '2026-08-13T08:15:09Z',
+      };
+    },
+    async banAndReplaceAccount({ account, idempotencyKey }) {
+      assert.equal(account, 'banned@example.com');
+      replacementKeys.push(idempotencyKey);
+      attempts += 1;
+      if (attempts === 1) {
+        throw new WorkstationAutomationError('unknown result', {
+          retryable: true,
+          outcomeUnknown: true,
+        });
+      }
+      return {
+        replayed: true,
+        bannedAccount: { id: 'ban-example-01', status: 'banned' },
+      };
+    },
+  };
+  const coordinator = new WorkstationInventoryImportCoordinator({ client, pool: store });
+  try {
+    await store.syncInventoryAccounts({
+      importLines: ['banned@example.com|old-password|JBSWY3DPEHPK3PXP'],
+      sourceVersion: 3,
+      updatedAt: '2026-08-13T08:00:00Z',
+    });
+    const account = await store.findAccountByEmail('banned@example.com');
+    await assert.rejects(() => coordinator.replaceBannedAccount(account.id), WorkstationAutomationError);
+    const pending = (await store.load()).accounts[0].accountReplacement;
+    assert.equal(pending.status, 'pending');
+    const result = await coordinator.replaceBannedAccount(account.id);
+    assert.equal(result.replayed, true);
+    assert.equal(replacementKeys[0], replacementKeys[1]);
+    const snapshot = await store.load();
+    const banned = snapshot.accounts.find((item) => item.email === 'banned@example.com');
+    const replacement = snapshot.accounts.find((item) => item.email === 'replacement@example.com');
+    assert.equal(banned.accountReplacement.status, 'completed');
+    assert.equal(banned.accountReplacement.banId, 'ban-example-01');
+    assert.equal(banned.inventoryPresent, false);
+    assert.equal(replacement.status, 'pending');
+    assert.equal(replacement.inventoryPresent, true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Workstation replacement coordinator retires a definitively rejected key', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-inventory-replacement-reject-'));
+  const file = path.join(directory, 'pool.dpapi');
+  const protect = async (plainText) => Buffer.from(plainText, 'utf8').toString('base64');
+  const unprotect = async (cipherText) => Buffer.from(cipherText, 'base64').toString('utf8');
+  const store = new LocalImportPoolStore({ file, protect, unprotect, now: () => 1_000_000 });
+  const client = {
+    async banAndReplaceAccount() {
+      throw new WorkstationAutomationError('replacement unavailable', {
+        status: 409,
+        code: 'replacement_account_unavailable',
+      });
+    },
+  };
+  const coordinator = new WorkstationInventoryImportCoordinator({ client, pool: store });
+  try {
+    await store.syncInventoryAccounts({
+      importLines: ['banned@example.com|old-password|JBSWY3DPEHPK3PXP'],
+      sourceVersion: 3,
+      updatedAt: '2026-08-13T08:00:00Z',
+    });
+    const account = await store.findAccountByEmail('banned@example.com');
+    await assert.rejects(() => coordinator.replaceBannedAccount(account.id), WorkstationAutomationError);
+    const stored = (await store.load()).accounts[0];
+    assert.equal(stored.accountReplacement, null);
+    assert.equal(stored.accountReplacementHistory.length, 1);
+    assert.equal(stored.accountReplacementHistory[0].reason, 'replacement_account_unavailable');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Workstation replacement state rejects malformed identifiers before DPAPI persistence', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-inventory-replacement-validation-'));
+  const file = path.join(directory, 'pool.dpapi');
+  const protect = async (plainText) => Buffer.from(plainText, 'utf8').toString('base64');
+  const unprotect = async (cipherText) => Buffer.from(cipherText, 'base64').toString('utf8');
+  const store = new LocalImportPoolStore({ file, protect, unprotect });
+  try {
+    await store.importAccounts('operator@example.com|runtime-password|JBSWY3DPEHPK3PXP');
+    const account = await store.findAccountByEmail('operator@example.com');
+    await assert.rejects(() => store.ensureAccountReplacement(account.id, 'short'), /16 to 128/);
+    await store.ensureAccountReplacement(account.id, generateAccountReplacementKey());
+    await assert.rejects(
+      () => store.recordAccountReplacement(account.id, {
+        idempotencyKey: generateAccountReplacementKey(),
+        banId: 'invalid/id',
+        replayed: false,
+      }),
+      /banId is invalid/
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

@@ -49,8 +49,17 @@ profile and the Sub2API OpenAI OAuth account-import flow.
   stops on OpenAI rate limiting. No account deletion route is implemented or
   permitted.
 - Outside that explicit Sub2API OAuth account create/update, this tool does not
-  change NewAPI channels, abilities, account rows, proxy bindings, DNS,
-  Cloudflare, or production containers.
+  change NewAPI channels, abilities, proxy bindings, DNS, Cloudflare, or
+  production containers. The only Workstation account mutation exposed as an
+  operator workflow is an explicit, idempotent `ban-and-replace` request
+  through the documented automation API; direct account-file or database
+  writes remain prohibited.
+- Workstation banned-account replacement requires an exact local email and an
+  explicit operator command or `--replace-banned` option. Persist the stable
+  idempotency key in DPAPI before the request, reuse it after an unknown result,
+  and never print banned or replacement credential rows.
+- Pending-replacement extraction returns complete account material and has no
+  CLI in this tool. Do not call it without an approved private output sink.
 
 ## Commands
 

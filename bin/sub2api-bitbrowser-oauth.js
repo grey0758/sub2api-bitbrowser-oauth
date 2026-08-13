@@ -40,6 +40,7 @@ function parseArgs(argv) {
     else if (item === '--limit') args.limit = Number(argv[++i]);
     else if (item === '--email') args.email = String(argv[++i] || '').trim();
     else if (item === '--retry-failed') args.retryFailed = true;
+    else if (item === '--replace-banned') args.replaceBanned = true;
     else if (item === '--incognito') args.incognito = true;
     else if (item === '--close-window') args.closeWindow = true;
     else if (item === '--help' || item === '-h') args.help = true;
@@ -57,9 +58,11 @@ function usage() {
     '  node bin/sub2api-bitbrowser-oauth.js import-account [--incognito] [--proxy-id ID] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js import-next [--incognito] [--proxy-id ID] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js inventory-sync-accounts',
+    '  node bin/sub2api-bitbrowser-oauth.js inventory-ban-pool-status',
+    '  node bin/sub2api-bitbrowser-oauth.js inventory-ban-and-replace --email EMAIL',
     '  node bin/sub2api-bitbrowser-oauth.js inventory-import-next [--incognito] [--proxy-id ID] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js account-health-audit',
-    '  node bin/sub2api-bitbrowser-oauth.js reauthorize-errors [--email EMAIL] [--retry-failed] [--incognito] [--proxy-id ID] [--timeout-ms N] [--limit N]',
+    '  node bin/sub2api-bitbrowser-oauth.js reauthorize-errors [--email EMAIL] [--retry-failed] [--replace-banned] [--incognito] [--proxy-id ID] [--timeout-ms N] [--limit N]',
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-phones < phones.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-accounts < accounts.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-status',
@@ -96,7 +99,7 @@ function safeError(error) {
       return `Workstation automation request failed (HTTP ${error.status}${code})`;
     }
     return error.outcomeUnknown
-      ? 'Workstation phone claim result is unknown; retry the same account to reuse its idempotency key'
+      ? 'Workstation mutation result is unknown; retry the same operation to reuse its idempotency key'
       : 'Workstation automation request failed';
   }
   if (error instanceof OpenAiRouteError) return 'OpenAI authorization returned a route content-type error; restart us001_codex and retry';
@@ -173,6 +176,31 @@ async function main(argv = process.argv.slice(2)) {
     console.log(
       `Workstation accounts synchronized into the encrypted pool: added=${result.added}; ` +
       `updated=${result.updated}; total=${result.total}.`
+    );
+    return;
+  }
+  if (args.command === 'inventory-ban-pool-status') {
+    const result = await new WorkstationAutomationClient().getBanPool();
+    console.log(
+      `Workstation ban pool status: total=${result.count}; banned=${result.bannedCount}; ` +
+      `replaced=${result.bannedReplacedCount}; pending-replacement=${result.pendingReplacementCount}.`
+    );
+    return;
+  }
+  if (args.command === 'inventory-ban-and-replace') {
+    if (!args.email) throw new Error('inventory-ban-and-replace requires --email');
+    const pool = new LocalImportPoolStore();
+    const account = await pool.findAccountByEmail(args.email);
+    if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+    const coordinator = new WorkstationInventoryImportCoordinator({
+      client: new WorkstationAutomationClient(),
+      pool,
+    });
+    const result = await coordinator.replaceBannedAccount(account.id);
+    console.log(
+      `Workstation banned account replaced and inventory synchronized: ` +
+      `replayed=${result.replayed}; added=${result.sync?.added || 0}; ` +
+      `updated=${result.sync?.updated || 0}.`
     );
     return;
   }
@@ -370,7 +398,20 @@ async function main(argv = process.argv.slice(2)) {
     }
     const sub2api = new Sub2ApiAdminClient();
     const browserController = browser;
-    const results = { reauthorized: 0, banned: 0, rateLimited: 0, failed: 0 };
+    const results = {
+      reauthorized: 0,
+      banned: 0,
+      replaced: 0,
+      replacementFailed: 0,
+      rateLimited: 0,
+      failed: 0,
+    };
+    const replacementCoordinator = args.replaceBanned
+      ? new WorkstationInventoryImportCoordinator({
+        client: new WorkstationAutomationClient(),
+        pool,
+      })
+      : null;
     let attempted = 0;
     for (const target of targets) {
       attempted += 1;
@@ -406,7 +447,26 @@ async function main(argv = process.argv.slice(2)) {
                 ? 'sub2api_error'
                 : 'failed';
         await pool.updateAccountHealthOutcome(target.accountId, outcome, { code: error.code }).catch(() => {});
-        if (outcome === 'account_banned') results.banned += 1;
+        if (outcome === 'account_banned') {
+          results.banned += 1;
+          if (replacementCoordinator) {
+            try {
+              await replacementCoordinator.replaceBannedAccount(queued.id);
+              await pool.updateAccountHealthOutcome(target.accountId, 'account_banned_replaced');
+              results.replaced += 1;
+            } catch (replacementError) {
+              if (
+                replacementError instanceof WorkstationAutomationError &&
+                !replacementError.outcomeUnknown &&
+                !replacementError.retryable
+              ) {
+                results.replacementFailed += 1;
+              } else {
+                throw replacementError;
+              }
+            }
+          }
+        }
         else if (outcome === 'rate_limited') results.rateLimited += 1;
         else results.failed += 1;
         if (outcome === 'rate_limited') break;
@@ -415,7 +475,8 @@ async function main(argv = process.argv.slice(2)) {
     console.log(
       `Error-account reauthorization batch finished: attempted=${attempted}; ` +
       `processed=${attempted}; ` +
-      `reauthorized=${results.reauthorized}; banned=${results.banned}; ` +
+      `reauthorized=${results.reauthorized}; banned=${results.banned}; replaced=${results.replaced}; ` +
+      `replacement-failed=${results.replacementFailed}; ` +
       `rate-limited=${results.rateLimited}; failed=${results.failed}.`
     );
     return;
