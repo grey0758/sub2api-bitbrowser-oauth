@@ -22,30 +22,34 @@ description: Use this skill when generating or exchanging a Sub2API OpenAI OAuth
    OAuth credentials to its single existing exact-email account.
 5. Treat exchange HTTP 200 as an intermediate result. A complete import is
    successful only after `GET /admin/accounts` shows the exact email.
-6. When phone verification is shown, poll the SMS API in two six-attempt,
+6. For an explicit login-status-only request, `probe-accounts` may read account
+   rows from standard input and stop at OAuth consent or phone verification.
+   It must not click consent, claim a phone, wait for or exchange a callback,
+   import an account, or persist the input rows.
+7. When phone verification is shown, poll the SMS API in two six-attempt,
    one-minute rounds. When the selected phone policy permits, click
    `Resend text message` once only after the first round fails; otherwise do
    not click it. After the second failure, call the injectable no-op
    `PhoneStatusApi.markInvalid` boundary and stop. On Windows, a Node TLS
    transport failure may use the hidden native HTTP fallback; it remains a
    direct API request and must not inherit administrator credentials.
-7. Keep the browser open for review. Only an explicit `--close-window` may
+8. Keep the browser open for review. Only an explicit `--close-window` may
    call the close endpoint; deletion is not implemented.
-8. When using the local queue, persist rows only through current-user Windows
+9. When using the local queue, persist rows only through current-user Windows
    DPAPI in the Git-ignored `.runtime` directory. Enforce the 45-minute phone
    cooldown from actual submission. Respect each phone's resend policy; pool
    imports default to no resend.
-9. Reset phone cooldowns only on an explicit operator request. Preserve the
+10. Reset phone cooldowns only on an explicit operator request. Preserve the
    prior use time, reset time, and reset count in the encrypted pool; never
    restore invalid phones through a cooldown reset.
-10. Restore an invalid-marked phone only after explicit operator confirmation
+11. Restore an invalid-marked phone only after explicit operator confirmation
     through the dedicated correction command, with correction audit fields.
     Change queued-phone resend policy only through its explicit policy command.
-11. Replace a provider-banned Workstation account only after an explicit
+12. Replace a provider-banned Workstation account only after an explicit
     `inventory-ban-and-replace --email` request or `reauthorize-errors
     --replace-banned`. Persist its idempotency key in DPAPI before the request,
     reuse it after an unknown result, and never print ban or replacement rows.
-12. Treat pending-replacement extraction as secret-bearing. The library may
+13. Treat pending-replacement extraction as secret-bearing. The library may
     call it only with an approved private consume callback, then redact its
     returned metadata. Do not expose a CLI that prints or discards the batch.
 

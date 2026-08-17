@@ -155,6 +155,7 @@ npm run inventory-sync-accounts
 npm run inventory-import-next
 npm run inventory-ban-pool-status
 npm run inventory-ban-and-replace -- --email account@example.com
+npm run probe-accounts < accounts.txt
 npm run test:dependencies
 ```
 
@@ -201,6 +202,12 @@ endpoint but deliberately exposes no CLI for it. Calling it requires a private
 returns only redacted metadata. The callback must write to an approved private
 destination; silently discarding or printing the batch would break the API
 contract.
+
+`probe-accounts` is a login-status-only workflow. It accepts temporary
+`email|password|TOTP` rows from standard input, uses an isolated context in the
+fixed BitBrowser profile, and stops as soon as consent or phone verification is
+reached. It never clicks consent, claims a phone, exchanges a callback, writes
+Sub2API account data, or persists the input rows.
 
 ## Error-account health and reauthorization
 

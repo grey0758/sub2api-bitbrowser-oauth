@@ -12,6 +12,7 @@
     "start": "node bin/sub2api-bitbrowser-oauth.js start --incognito",
     "run": "node bin/sub2api-bitbrowser-oauth.js run --incognito",
     "import-account": "node bin/sub2api-bitbrowser-oauth.js import-account --incognito",
+    "probe-accounts": "node bin/sub2api-bitbrowser-oauth.js probe-accounts --incognito",
     "import-next": "node bin/sub2api-bitbrowser-oauth.js import-next --incognito",
     "inventory-sync-accounts": "node bin/sub2api-bitbrowser-oauth.js inventory-sync-accounts",
     "inventory-ban-pool-status": "node bin/sub2api-bitbrowser-oauth.js inventory-ban-pool-status",

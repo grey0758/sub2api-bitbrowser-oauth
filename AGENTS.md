@@ -48,6 +48,10 @@ profile and the Sub2API OpenAI OAuth account-import flow.
   with matching pool login material, skips known banned/disabled rows, and
   stops on OpenAI rate limiting. No account deletion route is implemented or
   permitted.
+- `probe-accounts` accepts account rows through standard input only and keeps
+  them in memory. It stops at OAuth consent or phone verification, never clicks
+  consent, never claims a phone, never exchanges a callback, and never imports
+  or persists an account row.
 - Outside that explicit Sub2API OAuth account create/update, this tool does not
   change NewAPI channels, abilities, proxy bindings, DNS, Cloudflare, or
   production containers. The only Workstation account mutation exposed as an
@@ -71,6 +75,7 @@ npm run check                         # exact-name BitBrowser read-only check
 npm run start                         # generate + open, leave window open
 npm run run                           # generate, wait callback, exchange only
 npm run import-account                # login, exchange, create/update, verify
+npm run probe-accounts                # login/ban check only; stdin, no import
 npm run import-next                   # first pending account + available phone
 npm run inventory-sync-accounts      # remote accounts -> encrypted local pool
 npm run inventory-import-next        # remote account/phone allocation workflow

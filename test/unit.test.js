@@ -621,6 +621,7 @@ test('CLI accepts and documents incognito mode', () => {
   });
   assert.match(usage(), /--incognito/);
   assert.match(usage(), /import-account/);
+  assert.match(usage(), /probe-accounts/);
   assert.match(usage(), /import-next/);
   assert.match(usage(), /inventory-sync-accounts/);
   assert.match(usage(), /inventory-ban-pool-status/);
@@ -755,6 +756,47 @@ test('OpenAI route 500 regenerates OAuth authorization before retrying login', a
   assert.equal(generated, 2);
   assert.equal(opened, 2);
   assert.equal(released, 2);
+});
+
+test('OpenAI login probe stops before phone allocation or OAuth consent', async () => {
+  let generated = 0;
+  let preparedPhones = 0;
+  let released = 0;
+  const fakeSub2Api = {
+    async generateOpenAiAuthUrl() {
+      generated += 1;
+      return {
+        authUrl: 'https://auth.openai.com/oauth/authorize?state=runtime-only',
+        sessionId: 'runtime-only',
+        state: 'runtime-only',
+      };
+    },
+  };
+  const page = {
+    url: () => 'https://auth.openai.com/add-phone',
+    locator: (selector) => selector === 'body'
+      ? { innerText: async () => '' }
+      : { waitFor: async () => {}, isEditable: async () => true },
+  };
+  const fakeBrowser = {
+    async open() { return { page }; },
+    async release({ closeWindow }) {
+      assert.equal(closeWindow, false);
+      released += 1;
+    },
+  };
+  const flow = new OpenAiAccountImportFlow({
+    sub2api: fakeSub2Api,
+    browser: fakeBrowser,
+    account: { email: 'account@example.com', password: 'runtime-only', totpSecret: 'JBSWY3DPEHPK3PXP' },
+    preparePhone: async () => { preparedPhones += 1; },
+  });
+  const result = await flow.probe({ incognito: true, timeoutMs: 1_000 });
+  assert.equal(result.login.reached, 'phone_verification');
+  assert.equal(result.login.phoneVerification, 'required');
+  assert.equal(generated, 1);
+  assert.equal(preparedPhones, 0);
+  assert.equal(released, 1);
 });
 
 test('OpenAI banned-account text becomes a terminal sanitized login classification', async () => {

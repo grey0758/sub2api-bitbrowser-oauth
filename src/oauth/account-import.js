@@ -371,7 +371,7 @@ class OpenAiAccountImportFlow {
     this.preparePhone = preparePhone;
   }
 
-  async completeLogin(page, { timeoutMs = 5 * 60_000 } = {}) {
+  async completeLogin(page, { timeoutMs = 5 * 60_000, stopBeforePhoneVerification = false } = {}) {
     const deadline = Date.now() + timeoutMs;
     let nextActionAt = 0;
     let submittedRoute = '';
@@ -379,7 +379,14 @@ class OpenAiAccountImportFlow {
     while (Date.now() < deadline) {
       await assertNoRouteError(page);
       const route = await detectOpenAiAuthPage(page);
-      if (route === 'consent') return { phoneVerification };
+      if (route === 'consent') {
+        return stopBeforePhoneVerification
+          ? { phoneVerification, reached: 'consent' }
+          : { phoneVerification };
+      }
+      if (stopBeforePhoneVerification && ['add_phone', 'phone_verification'].includes(route)) {
+        return { phoneVerification: 'required', reached: 'phone_verification' };
+      }
       if (submittedRoute && route !== submittedRoute) submittedRoute = '';
       if (submittedRoute === route) {
         await page.waitForTimeout(300);
@@ -529,6 +536,26 @@ class OpenAiAccountImportFlow {
       await page.waitForTimeout(300);
     }
     throw new Error('OpenAI authorization consent page was not reached');
+  }
+
+  async probe({ proxyId, incognito = true, timeoutMs = 5 * 60_000, maxRouteRetries = 3 } = {}) {
+    const retries = Math.max(0, Math.min(5, Number(maxRouteRetries) || 0));
+    for (let routeAttempt = 0; routeAttempt <= retries; routeAttempt += 1) {
+      const authorization = await this.sub2api.generateOpenAiAuthUrl({ proxyId });
+      const session = await this.browser.open({ url: authorization.authUrl, incognito, waitUntil: 'commit' });
+      try {
+        const login = await this.completeLogin(session.page, {
+          timeoutMs: Math.min(timeoutMs, 5 * 60_000),
+          stopBeforePhoneVerification: true,
+        });
+        return { login, routeAttempts: routeAttempt };
+      } catch (error) {
+        if (!(error instanceof OpenAiRouteError) || routeAttempt >= retries) throw error;
+      } finally {
+        await this.browser.release({ closeWindow: false });
+      }
+    }
+    throw new OpenAiRouteError();
   }
 
   async run({ proxyId, incognito = true, timeoutMs = 10 * 60_000, maxRouteRetries = 3 } = {}) {

@@ -22,6 +22,7 @@ const { WorkstationInventoryImportCoordinator } = require('../src/workstation/in
 const {
   LocalImportPoolError,
   LocalImportPoolStore,
+  parseAccountPoolSource,
 } = require('../src/pool/local-import-pool');
 
 async function readStdin() {
@@ -56,6 +57,7 @@ function usage() {
     '  node bin/sub2api-bitbrowser-oauth.js start [--incognito] [--proxy-id ID]',
     '  node bin/sub2api-bitbrowser-oauth.js run [--incognito] [--proxy-id ID] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js import-account [--incognito] [--proxy-id ID] [--timeout-ms N]',
+    '  node bin/sub2api-bitbrowser-oauth.js probe-accounts [--incognito] [--proxy-id ID] [--timeout-ms N] < accounts.txt',
     '  node bin/sub2api-bitbrowser-oauth.js import-next [--incognito] [--proxy-id ID] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js inventory-sync-accounts',
     '  node bin/sub2api-bitbrowser-oauth.js inventory-ban-pool-status',
@@ -78,6 +80,8 @@ function usage() {
     'import-account performs the reproducible account login flow, including',
     'local TOTP, optional phone/SMS verification, consent, callback-state',
     'validation, exchange, account create/update, and account-list verification.',
+    'probe-accounts stops at consent or phone verification and never exchanges',
+    'a callback, imports an account, claims a phone, or persists the input rows.',
     '',
     'Credentials are runtime-only: SUB2API_ADMIN_TOKEN, SUB2API_ADMIN_API_KEY,',
     'or SUB2API_ADMIN_COOKIE. import-account additionally requires',
@@ -250,6 +254,75 @@ async function main(argv = process.argv.slice(2)) {
         : ' Phone verification was not required.';
     const actionLabel = completed.outcome.action === 'updated' ? 'updated' : 'created';
     console.log(`OpenAI OAuth account ${actionLabel} and verified in Sub2API.${phoneLabel}`);
+    return;
+  }
+  if (args.command === 'probe-accounts') {
+    const parsed = parseAccountPoolSource(await readStdin());
+    if (parsed.issues.length > 0 || parsed.accounts.length === 0 || parsed.accounts.length > 100) {
+      throw new OpenAiImportConfigError('Probe input must contain 1 to 100 valid account rows');
+    }
+    const sub2api = new Sub2ApiAdminClient();
+    const results = {
+      checked: 0,
+      loginValid: 0,
+      phoneRequired: 0,
+      banned: 0,
+      invalidCredentials: 0,
+      rateLimited: 0,
+      failed: 0,
+    };
+    for (const account of parsed.accounts) {
+      const importer = new OpenAiAccountImportFlow({
+        sub2api,
+        browser,
+        account: {
+          email: account.email,
+          password: account.password,
+          totpSecret: account.totpSecret,
+          phone: '',
+          smsAccessUrl: '',
+          allowSmsResend: false,
+        },
+      });
+      results.checked += 1;
+      let status;
+      try {
+        const probe = await importer.probe({
+          proxyId: args.proxyId,
+          incognito: Boolean(args.incognito),
+          timeoutMs: args.timeoutMs || 5 * 60_000,
+        });
+        if (probe.login.reached === 'phone_verification') {
+          status = 'login_valid_phone_required';
+          results.phoneRequired += 1;
+        } else {
+          status = 'login_valid';
+          results.loginValid += 1;
+        }
+      } catch (error) {
+        if (error instanceof OpenAiLoginError && error.code === 'account_banned') {
+          status = 'account_banned';
+          results.banned += 1;
+        } else if (error instanceof OpenAiLoginError && error.code === 'invalid_credentials') {
+          status = 'invalid_credentials';
+          results.invalidCredentials += 1;
+        } else if (error instanceof OpenAiLoginError && error.code === 'rate_limited') {
+          status = 'rate_limited';
+          results.rateLimited += 1;
+        } else {
+          status = 'check_failed';
+          results.failed += 1;
+        }
+      }
+      console.log(`${account.email}\t${status}`);
+      if (status === 'rate_limited') break;
+    }
+    console.log(
+      `Account login probe finished: checked=${results.checked}; login-valid=${results.loginValid}; ` +
+      `phone-required=${results.phoneRequired}; banned=${results.banned}; ` +
+      `invalid-credentials=${results.invalidCredentials}; rate-limited=${results.rateLimited}; ` +
+      `failed=${results.failed}.`
+    );
     return;
   }
   if (args.command === 'import-next') {
