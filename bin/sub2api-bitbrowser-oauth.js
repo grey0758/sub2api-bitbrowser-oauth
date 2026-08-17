@@ -41,6 +41,7 @@ function parseArgs(argv) {
     else if (item === '--limit') args.limit = Number(argv[++i]);
     else if (item === '--email') args.email = String(argv[++i] || '').trim();
     else if (item === '--retry-failed') args.retryFailed = true;
+    else if (item === '--retry-banned') args.retryBanned = true;
     else if (item === '--replace-banned') args.replaceBanned = true;
     else if (item === '--incognito') args.incognito = true;
     else if (item === '--close-window') args.closeWindow = true;
@@ -64,7 +65,7 @@ function usage() {
     '  node bin/sub2api-bitbrowser-oauth.js inventory-ban-and-replace --email EMAIL',
     '  node bin/sub2api-bitbrowser-oauth.js inventory-import-next [--incognito] [--proxy-id ID] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js account-health-audit',
-    '  node bin/sub2api-bitbrowser-oauth.js reauthorize-errors [--email EMAIL] [--retry-failed] [--replace-banned] [--incognito] [--proxy-id ID] [--timeout-ms N] [--limit N]',
+    '  node bin/sub2api-bitbrowser-oauth.js reauthorize-errors [--email EMAIL] [--retry-failed] [--retry-banned] [--replace-banned] [--incognito] [--proxy-id ID] [--timeout-ms N] [--limit N]',
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-phones < phones.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-accounts < accounts.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-status',
@@ -455,7 +456,10 @@ async function main(argv = process.argv.slice(2)) {
     const poolByEmail = new Map(snapshot.accounts.map((item) => [item.email.trim().toLowerCase(), item]));
     const limit = args.limit === undefined ? Number.POSITIVE_INFINITY : Math.max(1, Math.min(100, Number(args.limit) || 1));
     const requestedEmail = String(args.email || '').trim().toLowerCase();
-    const retryableOutcomes = args.retryFailed ? new Set(['pending', 'failed', 'route_error', 'sub2api_error']) : new Set(['pending']);
+    const retryableOutcomes = args.retryFailed
+      ? new Set(['pending', 'failed', 'route_error', 'sub2api_error'])
+      : new Set(['pending']);
+    if (args.retryBanned) retryableOutcomes.add('account_banned');
     const targets = audit.filter((entry) => (
       entry.status === 'error' &&
       entry.category !== 'provider_banned_or_disabled' &&

@@ -638,6 +638,10 @@ test('CLI accepts and documents incognito mode', () => {
     email: 'account@example.com',
     replaceBanned: true,
   });
+  assert.deepEqual(parseArgs(['reauthorize-errors', '--retry-banned']), {
+    command: 'reauthorize-errors',
+    retryBanned: true,
+  });
 });
 
 test('OpenAI account runtime values stay process-only and phone fields are lazy', () => {

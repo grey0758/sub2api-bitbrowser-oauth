@@ -214,6 +214,7 @@ Sub2API account data, or persists the input rows.
 ```bash
 npm run account-health-audit
 npm run reauthorize-errors -- --limit 1
+npm run reauthorize-errors -- --retry-banned
 npm run reauthorize-errors -- --email account@example.com --replace-banned
 ```
 
@@ -236,6 +237,10 @@ DPAPI-backed replacement coordinator and synchronizes the promoted replacement
 into the local pending queue. Without the flag, reauthorization does not mutate
 Workstation inventory. Historical banned outcomes never trigger a replacement
 automatically.
+
+`--retry-banned` is a separate explicit recheck option. It retries prior
+`account_banned` outcomes that are still Sub2API OAuth errors and still have
+encrypted local login material. It does not delete or replace those accounts.
 
 If the opened OpenAI authorization page shows `Oops, an error occurred` with
 `Route Error (500 Internal Server Error)`, the importer treats the OAuth session

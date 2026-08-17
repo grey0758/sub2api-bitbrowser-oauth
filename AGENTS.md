@@ -45,9 +45,10 @@ profile and the Sub2API OpenAI OAuth account-import flow.
   the encrypted local pool.
 - `account-health-audit` may retain only redacted error-account health records
   in the encrypted DPAPI pool. `reauthorize-errors` processes only error rows
-  with matching pool login material, skips known banned/disabled rows, and
-  stops on OpenAI rate limiting. No account deletion route is implemented or
-  permitted.
+  with matching pool login material, always skips management-classified
+  banned/disabled rows, and retries a prior `account_banned` outcome only when
+  the operator explicitly passes `--retry-banned`. It stops on OpenAI rate
+  limiting. No account deletion route is implemented or permitted.
 - `probe-accounts` accepts account rows through standard input only and keeps
   them in memory. It stops at OAuth consent or phone verification, never clicks
   consent, never claims a phone, never exchanges a callback, and never imports
