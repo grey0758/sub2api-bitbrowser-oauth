@@ -105,6 +105,18 @@ test('account health audit classifies revoked OAuth records and matches only enc
   );
   assert.equal(preserved.entries[0].outcome, 'account_banned');
   assert.equal(preserved.entries[0].outcomeCode, 'account_banned');
+
+  const switched = buildAccountHealthAudit(
+    [{ id: 'account-1', platform: 'openai', status: 'error', error_message: 'Token revoked (401)', credentials: { email: 'one@example.com' } }],
+    [{ email: 'one@example.com' }],
+    {
+      sourceBaseUrl: 'https://sub2apipro.opencodex.uk',
+      entries: [{ accountId: 'account-1', outcome: 'account_banned' }],
+    },
+    { sourceBaseUrl: 'https://sub2apiplus.opencodex.uk/' }
+  );
+  assert.equal(switched.sourceBaseUrl, 'https://sub2apiplus.opencodex.uk');
+  assert.equal(switched.entries[0].outcome, 'pending');
 });
 
 test('runtime environment loader preserves explicit process values', () => {
@@ -465,6 +477,7 @@ test('BitBrowser close treats an already-stopped ESRCH process as closed', async
 
 test('Sub2API client fails closed when administrator credential is absent', async () => {
   const client = new Sub2ApiAdminClient({ fetchImpl: async () => { throw new Error('must not call network'); } });
+  assert.equal(client.baseUrl, 'https://sub2apiplus.opencodex.uk');
   await assert.rejects(() => client.generateOpenAiAuthUrl(), /administrator credentials are missing/);
 });
 
@@ -710,6 +723,7 @@ test('Codex rate-limit footer is informational, not an active login limit', () =
 
 test('OpenAI route 500 regenerates OAuth authorization before retrying login', async () => {
   assert.equal(isOpenAiRouteErrorText('Oops, an error occurred! Route Error (500 Internal Server Error): {"isTrusted":true}'), true);
+  assert.equal(isOpenAiRouteErrorText('Oops, an error occurred! Unexpected token \'<\', "<!DOCTYPE "... is not valid JSON'), true);
   let generated = 0;
   let opened = 0;
   let released = 0;

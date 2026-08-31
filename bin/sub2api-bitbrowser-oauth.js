@@ -215,7 +215,9 @@ async function main(argv = process.argv.slice(2)) {
     const pool = new LocalImportPoolStore();
     const accounts = await sub2api.listAllAccounts();
     const snapshot = await pool.load();
-    const audit = buildAccountHealthAudit(accounts, snapshot.accounts, snapshot.accountHealthAudit);
+    const audit = buildAccountHealthAudit(accounts, snapshot.accounts, snapshot.accountHealthAudit, {
+      sourceBaseUrl: sub2api.baseUrl,
+    });
     const result = await pool.saveAccountHealthAudit(audit);
     console.log(
       `Account health audit saved in the encrypted pool: total=${result.total}; ` +

@@ -1,6 +1,6 @@
 'use strict';
 
-const DEFAULT_BASE_URL = 'https://sub2apipro.opencodex.uk';
+const DEFAULT_BASE_URL = 'https://sub2apiplus.opencodex.uk';
 
 class Sub2ApiError extends Error {
   constructor(message, { status, data, cause } = {}) {

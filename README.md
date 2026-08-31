@@ -18,7 +18,7 @@ Required runtime values:
 
 - `BITBROWSER_API_URL` (default `http://127.0.0.1:54345`)
 - `BITBROWSER_WINDOW_NAME` (default `us001_codex`)
-- `SUB2API_BASE_URL` (default `https://sub2apipro.opencodex.uk`)
+- `SUB2API_BASE_URL` (default `https://sub2apiplus.opencodex.uk`)
 - `SUB2API_API_PREFIX` (default `/api/v1`, matching the deployed frontend)
 - one of `SUB2API_ADMIN_TOKEN`, `SUB2API_ADMIN_API_KEY`, or
   `SUB2API_ADMIN_COOKIE`
@@ -94,7 +94,7 @@ not its arguments, and administrator credentials are not inherited. This is
 still a direct API request; no browser page is opened.
 
 The Sub2API administrator UI is served at the configured base URL (the
-deployment default is `https://sub2apipro.opencodex.uk`), with accounts at
+deployment default is `https://sub2apiplus.opencodex.uk`), with accounts at
 `/admin/accounts`; the API prefix is `/api/v1`.
 
 `start` and `run` default to `--incognito` through the npm scripts. Direct CLI
@@ -281,6 +281,10 @@ bindings, or production containers.
 See [docs/oauth-flow.md](docs/oauth-flow.md) and
 [docs/source-lineage.md](docs/source-lineage.md) for the durable workflow and
 Curator context.
+
+For the complete session-derived capability map, operator runbooks, failure
+classification, and archive/recovery checklist, see
+[docs/project-workflow-archive.md](docs/project-workflow-archive.md).
 
 The route shapes, account statuses, timestamp history, one-time banned-account
 replacement batches, and three-use phone rules are documented without secrets

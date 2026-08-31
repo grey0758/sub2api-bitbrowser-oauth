@@ -45,10 +45,12 @@ function accountHealthRecord(account, poolEmails, previousEntries = new Map()) {
   };
 }
 
-function buildAccountHealthAudit(accounts, poolAccounts, previousAudit = null) {
+function buildAccountHealthAudit(accounts, poolAccounts, previousAudit = null, { sourceBaseUrl = '' } = {}) {
   const poolEmails = new Set(poolAccounts.map((account) => String(account.email || '').trim().toLowerCase()));
+  const normalizedSourceBaseUrl = String(sourceBaseUrl || '').trim().replace(/\/+$/, '');
+  const preservePrevious = !normalizedSourceBaseUrl || previousAudit?.sourceBaseUrl === normalizedSourceBaseUrl;
   const previousEntries = new Map(
-    Array.isArray(previousAudit?.entries)
+    preservePrevious && Array.isArray(previousAudit?.entries)
       ? previousAudit.entries.map((entry) => [String(entry.accountId || ''), entry])
       : []
   );
@@ -58,6 +60,7 @@ function buildAccountHealthAudit(accounts, poolAccounts, previousAudit = null) {
   return {
     version: 1,
     generatedAt: Date.now(),
+    ...(normalizedSourceBaseUrl ? { sourceBaseUrl: normalizedSourceBaseUrl } : {}),
     entries,
   };
 }

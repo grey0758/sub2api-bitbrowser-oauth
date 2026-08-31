@@ -254,6 +254,13 @@ function normalizeSnapshot(value) {
       !Array.isArray(value.accountHealthAudit.entries) ||
       value.accountHealthAudit.entries.length > 10_000
     ) throw new LocalImportPoolError('Local import pool is invalid', { code: 'pool_invalid' });
+    if (
+      value.accountHealthAudit.sourceBaseUrl !== undefined &&
+      (
+        typeof value.accountHealthAudit.sourceBaseUrl !== 'string' ||
+        !/^https:\/\/[^\s]+$/i.test(value.accountHealthAudit.sourceBaseUrl)
+      )
+    ) throw new LocalImportPoolError('Local import pool is invalid', { code: 'pool_invalid' });
     for (const entry of value.accountHealthAudit.entries) {
       if (
         typeof entry?.accountId !== 'string' ||
@@ -429,6 +436,7 @@ class LocalImportPoolStore {
       snapshot.accountHealthAudit = {
         version: 1,
         generatedAt: Number.isFinite(audit.generatedAt) ? audit.generatedAt : this.now(),
+        ...(audit.sourceBaseUrl ? { sourceBaseUrl: String(audit.sourceBaseUrl) } : {}),
         entries: audit.entries.map((entry) => ({ ...entry })),
       };
       return {

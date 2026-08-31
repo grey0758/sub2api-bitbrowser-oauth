@@ -322,7 +322,8 @@ function isOpenAiRateLimitText(value) {
 function isOpenAiRouteErrorText(value) {
   const text = String(value || '');
   return /Oops,?\s*an error occurred!?[\s\S]{0,160}Route Error\s*\(\s*500\s+Internal Server Error\s*\)/i.test(text)
-    || /Route Error\s*\(\s*500\s+Internal Server Error\s*\)/i.test(text);
+    || /Route Error\s*\(\s*500\s+Internal Server Error\s*\)/i.test(text)
+    || /Unexpected token\s*['"]?<['"]?[\s\S]{0,160}(?:<!DOCTYPE|not valid JSON)/i.test(text);
 }
 
 async function assertNoRouteError(page) {
@@ -538,7 +539,7 @@ class OpenAiAccountImportFlow {
     throw new Error('OpenAI authorization consent page was not reached');
   }
 
-  async probe({ proxyId, incognito = true, timeoutMs = 5 * 60_000, maxRouteRetries = 3 } = {}) {
+  async probe({ proxyId, incognito = true, timeoutMs = 5 * 60_000, maxRouteRetries = 1 } = {}) {
     const retries = Math.max(0, Math.min(5, Number(maxRouteRetries) || 0));
     for (let routeAttempt = 0; routeAttempt <= retries; routeAttempt += 1) {
       const authorization = await this.sub2api.generateOpenAiAuthUrl({ proxyId });
@@ -558,7 +559,7 @@ class OpenAiAccountImportFlow {
     throw new OpenAiRouteError();
   }
 
-  async run({ proxyId, incognito = true, timeoutMs = 10 * 60_000, maxRouteRetries = 3 } = {}) {
+  async run({ proxyId, incognito = true, timeoutMs = 10 * 60_000, maxRouteRetries = 1 } = {}) {
     const oauth = new OAuthFlow({ sub2api: this.sub2api, browser: this.browser });
     const retries = Math.max(0, Math.min(5, Number(maxRouteRetries) || 0));
     for (let routeAttempt = 0; routeAttempt <= retries; routeAttempt += 1) {
