@@ -15,6 +15,9 @@ profile and the Sub2API OpenAI OAuth account-import flow.
 - Google Gemini import: select one `stored` row only from the separate Google
   DPAPI pool, authorize it with the supported Sub2API Gemini OAuth endpoints,
   and mark it `imported` only after an exact Gemini account-list postcondition.
+- Google Antigravity import: use the dedicated Sub2API Antigravity OAuth
+  endpoints and verify an exact `platform=antigravity` account; never treat
+  Antigravity as a Gemini OAuth type.
 - Login-only probing: determine whether supplied credentials reach consent or
   phone verification without exchanging OAuth, claiming a phone, importing, or
   persisting the supplied rows.
@@ -120,6 +123,21 @@ profile and the Sub2API OpenAI OAuth account-import flow.
    proxy. Because it requires a stopped window, close exact `us001_codex` only
    with explicit owner authorization and immediately reopen it for the bounded
    OAuth attempt.
+
+### Google Antigravity OAuth import
+
+1. Use `/admin/antigravity/oauth/auth-url` and
+   `/admin/antigravity/oauth/exchange-code`; accept only the exact
+   `http://localhost:8085/callback` route with a matching state.
+2. Create or update only the selected exact account name as
+   `platform=antigravity,type=oauth`, pass the target pool's numeric proxy ID,
+   and require a fresh exact-name Antigravity list read before marking the DPAPI
+   row imported.
+3. When the owner replaces the Google queue, preserve the old DPAPI file in a
+   restricted encrypted backup, reject the complete replacement if any input
+   row is invalid, and report counts only.
+4. Stop after the requested first-account test. Never print the Google row,
+   password, TOTP secret, live code, OAuth URL/state/code, tokens, or cookies.
 
 ### Controlled deletion
 
@@ -234,8 +252,10 @@ npm run account-health-audit          # encrypted redacted account status list
 npm run reauthorize-errors            # guarded sequential error-account retry
 npm run pool-status                   # status-only encrypted pool summary
 npm run pool-import-google-accounts   # stdin Google rows -> stored-only DPAPI pool
+npm run pool-replace-google-accounts  # atomically replace Google rows from stdin
 npm run pool-google-status            # Google count only; never prints rows
 npm run google-oauth-import-next      # one Google row -> verified Gemini account
+npm run antigravity-oauth-import-next # one Google row -> verified Antigravity account
 ```
 
 Use a runtime environment or a secret manager injector for the administrator

@@ -86,7 +86,12 @@ class FixedWindowSession {
     return this.context.pages();
   }
 
-  async waitForCallback({ timeoutMs = 10 * 60_000, pollMs = 500, allowCodeAssist = false } = {}) {
+  async waitForCallback({
+    timeoutMs = 10 * 60_000,
+    pollMs = 500,
+    allowCodeAssist = false,
+    allowAntigravity = false,
+  } = {}) {
     const deadline = Date.now() + timeoutMs;
     let settled = false;
     let resolveCallback;
@@ -99,7 +104,7 @@ class FixedWindowSession {
     const observePage = (page) => {
       if (listeners.has(page)) return;
       const onRequest = (request) => {
-        const parsed = parseCallbackUrl(request.url(), { allowCodeAssist });
+        const parsed = parseCallbackUrl(request.url(), { allowCodeAssist, allowAntigravity });
         if (parsed && !settled) {
           settled = true;
           resolveCallback({ ...parsed, page });
@@ -107,7 +112,7 @@ class FixedWindowSession {
       };
       const onFrameNavigated = (frame) => {
         if (frame !== page.mainFrame()) return;
-        const parsed = parseCallbackUrl(frame.url(), { allowCodeAssist });
+        const parsed = parseCallbackUrl(frame.url(), { allowCodeAssist, allowAntigravity });
         if (parsed && !settled) {
           settled = true;
           resolveCallback({ ...parsed, page });
@@ -133,7 +138,7 @@ class FixedWindowSession {
       while (!settled && Date.now() < deadline) {
         for (const page of this.context.pages()) {
           observePage(page);
-          const parsed = parseCallbackUrl(page.url(), { allowCodeAssist });
+          const parsed = parseCallbackUrl(page.url(), { allowCodeAssist, allowAntigravity });
           if (parsed && !settled) {
             settled = true;
             resolveCallback({ ...parsed, page });
@@ -157,7 +162,7 @@ class FixedWindowSession {
   }
 }
 
-function parseCallbackUrl(value, { allowCodeAssist = false } = {}) {
+function parseCallbackUrl(value, { allowCodeAssist = false, allowAntigravity = false } = {}) {
   if (!value || !/^https?:\/\//i.test(value)) return null;
   let parsed;
   try { parsed = new URL(value); } catch { return null; }
@@ -167,7 +172,11 @@ function parseCallbackUrl(value, { allowCodeAssist = false } = {}) {
     parsed.protocol === 'https:' &&
     parsed.hostname === 'codeassist.google.com' &&
     /^\/authcode\/?$/.test(parsed.pathname);
-  if (!localCallback && !codeAssistCallback) return null;
+  const antigravityCallback = allowAntigravity &&
+    /^localhost$|^127\.0\.0\.1$/.test(parsed.hostname) &&
+    parsed.port === '8085' &&
+    /^\/callback\/?$/.test(parsed.pathname);
+  if (!localCallback && !codeAssistCallback && !antigravityCallback) return null;
   const code = parsed.searchParams.get('code');
   if (!code) return null;
   return { code, state: parsed.searchParams.get('state') || '' };

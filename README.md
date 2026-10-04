@@ -1,7 +1,8 @@
 # Sub2API BitBrowser OAuth
 
-This small Node.js service opens supported Sub2API OpenAI and Gemini OAuth
-authorization flows in the already-created BitBrowser window `us001_codex`.
+This small Node.js service opens supported Sub2API OpenAI, Gemini, and
+Antigravity OAuth authorization flows in the already-created BitBrowser window
+`us001_codex`.
 
 It uses the same BitBrowser API/CDP approach as `plus_paypal`, but intentionally
 does not use its random-window/cleanup mode. The exact-name controller is the
@@ -141,6 +142,30 @@ BitBrowser profile or its proxy settings. The option is ineffective for an
 already-running window, so closing the exact profile requires explicit owner
 authorization. The window remains open after the OAuth attempt.
 
+### Google account to Antigravity OAuth import
+
+Antigravity is a separate Sub2API platform, not a Gemini `google_one`,
+`code_assist`, or `ai_studio` OAuth type. To authorize exactly one stored
+Google row into the Plus Antigravity pool, run:
+
+```bash
+npm run antigravity-oauth-import-next -- --proxy-id 1 --timeout-ms 600000
+```
+
+The command uses the dedicated
+`/admin/antigravity/oauth/auth-url` and
+`/admin/antigravity/oauth/exchange-code` endpoints, accepts only the
+`http://localhost:8085/callback` redirect with the exact generated state, and
+creates or updates only the selected exact account name. A new account uses
+`platform=antigravity`, `type=oauth`, priority `1000`, rate multiplier `1`,
+and the supplied numeric proxy ID. Success requires a fresh account-list read
+that proves all of those fields. The encrypted row is marked `imported` only
+after that postcondition passes, and the BitBrowser window remains open.
+
+This command intentionally does not accept `--direct-browser-egress`. It uses
+the saved `us001_codex` network configuration. Unsupported verification routes
+or an unavailable two-factor code stop the attempt for owner review.
+
 ## Encrypted local import pool
 
 Pending accounts and phone/SMS pairs can be fed through stdin into a local
@@ -150,9 +175,11 @@ Windows DPAPI-encrypted pool:
 npm run pool-import-phones < phones.txt
 npm run pool-import-accounts < openai-accounts.txt
 npm run pool-import-google-accounts < google-accounts.txt
+npm run pool-replace-google-accounts < google-accounts.txt
 npm run pool-status
 npm run pool-google-status
 npm run google-oauth-import-next -- --oauth-type google_one --timeout-ms 600000
+npm run antigravity-oauth-import-next -- --proxy-id 1 --timeout-ms 600000
 npm run pool-reset-phone-cooldowns
 npm run pool-correct-invalid-phone
 npm run pool-enable-resend
@@ -168,14 +195,19 @@ migrated to `openai`; Google rows use `google` and have an independent
 `stored`/`imported` lifecycle. The same email may exist once in each provider
 pool, while duplicates inside one provider are ignored.
 
-`pool-import-google-accounts` accepts stdin-only
-`email|password|2FA` rows. `2FA` may be a validated Base32 TOTP secret or an
-HTTPS code-access URL; the encrypted row records which kind it is. The import
-command selects only a `stored` row, and changes it to `imported` only after
-the exact Gemini account-list postcondition passes. A failed attempt returns
-the row to `stored`; a Google rate-limit result adds a 15-minute retry delay,
-while explicitly rejected credentials remain encrypted and are deferred for 24
-hours before they are eligible again.
+`pool-import-google-accounts` and `pool-replace-google-accounts` accept
+stdin-only `email|password|2FA` or `email----password----2FA` rows. `2FA` may
+be a validated Base32 TOTP secret or an HTTPS code-access URL; the encrypted
+row records which kind it is. The replace command validates the complete batch
+before changing the encrypted pool and refuses the entire replacement if any
+row is invalid. Before a replacement, preserve the existing
+`.runtime/google-account-pool.dpapi` as a current-user-only encrypted backup in
+`.runtime/backups/`; never decrypt or print it. The import command selects only
+a `stored` row, and changes it to `imported` only after the platform-specific
+Gemini or Antigravity account-list postcondition passes. A failed attempt
+returns the row to `stored`; a Google rate-limit result adds a 15-minute retry
+delay, while explicitly rejected credentials remain encrypted and are deferred
+for 24 hours before they are eligible again.
 `pool-google-status` prints counts only.
 Private-history recovery must stream extracted rows directly to this command;
 never save a transcript or plaintext credential export in the repository.

@@ -10,6 +10,9 @@ const {
   GoogleLoginError,
 } = require('../src/oauth/google-gemini-import');
 const {
+  GoogleAntigravityOAuthImportFlow,
+} = require('../src/oauth/google-antigravity-import');
+const {
   OpenAiAccountImportFlow,
   OpenAiImportConfigError,
   OpenAiLoginError,
@@ -85,9 +88,11 @@ function usage() {
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-phones < phones.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-accounts < openai-accounts.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-google-accounts < google-accounts.txt',
+    '  node bin/sub2api-bitbrowser-oauth.js pool-replace-google-accounts < google-accounts.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-status',
     '  node bin/sub2api-bitbrowser-oauth.js pool-google-status',
     '  node bin/sub2api-bitbrowser-oauth.js google-oauth-import-next [--oauth-type google_one|code_assist|ai_studio] [--project-id ID] [--tier-id ID] [--proxy-id ID] [--direct-browser-egress] [--timeout-ms N]',
+    '  node bin/sub2api-bitbrowser-oauth.js antigravity-oauth-import-next [--proxy-id ID] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js pool-reset-phone-cooldowns',
     '  node bin/sub2api-bitbrowser-oauth.js pool-correct-invalid-phone',
     '  node bin/sub2api-bitbrowser-oauth.js pool-enable-resend',
@@ -170,18 +175,27 @@ async function main(argv = process.argv.slice(2)) {
   if (
     args.command === 'pool-import-phones' ||
     args.command === 'pool-import-accounts' ||
-    args.command === 'pool-import-google-accounts'
+    args.command === 'pool-import-google-accounts' ||
+    args.command === 'pool-replace-google-accounts'
   ) {
     const source = await readStdin();
     const pool = new LocalImportPoolStore(
-      args.command === 'pool-import-google-accounts' ? { file: DEFAULT_GOOGLE_POOL_FILE } : undefined
+      ['pool-import-google-accounts', 'pool-replace-google-accounts'].includes(args.command)
+        ? { file: DEFAULT_GOOGLE_POOL_FILE }
+        : undefined
     );
-    const result = args.command === 'pool-import-phones'
+    const result = args.command === 'pool-replace-google-accounts'
+      ? await pool.replaceGoogleAccounts(source)
+      : args.command === 'pool-import-phones'
       ? await pool.importPhones(source)
       : args.command === 'pool-import-google-accounts'
         ? await pool.importGoogleAccounts(source)
         : await pool.importAccounts(source);
-    console.log(`Local pool updated: added=${result.added}; rejected=${result.rejected}; total=${result.total}.`);
+    if (args.command === 'pool-replace-google-accounts') {
+      console.log(`Local Google pool replaced: removed=${result.removed}; added=${result.added}; total=${result.total}.`);
+    } else {
+      console.log(`Local pool updated: added=${result.added}; rejected=${result.rejected}; total=${result.total}.`);
+    }
     return;
   }
   if (args.command === 'pool-status' || args.command === 'pool-google-status') {
@@ -279,6 +293,44 @@ async function main(argv = process.argv.slice(2)) {
       });
       await pool.markGoogleImported(selected.id);
       console.log(`Google OAuth account ${completed.action} and verified in the Sub2API Gemini pool.`);
+    } catch (error) {
+      const outcome = error instanceof GoogleLoginError
+        ? error.code
+        : error instanceof Sub2ApiError
+          ? 'sub2api_error'
+          : 'failed';
+      await pool.markGoogleStored(selected.id, outcome, {
+        retryAfterMs: error instanceof GoogleLoginError
+          ? error.code === 'rate_limited'
+            ? 15 * 60_000
+            : error.code === 'invalid_credentials'
+              ? GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS
+              : 0
+          : 0,
+      }).catch(() => {});
+      throw error;
+    }
+    return;
+  }
+  if (args.command === 'antigravity-oauth-import-next') {
+    if (!Number.isInteger(args.proxyId) || args.proxyId <= 0) {
+      throw new Error('antigravity-oauth-import-next requires --proxy-id with a positive numeric account proxy ID');
+    }
+    const pool = new LocalImportPoolStore({ file: DEFAULT_GOOGLE_POOL_FILE });
+    const selected = await pool.beginNextGoogleAttempt();
+    const importer = new GoogleAntigravityOAuthImportFlow({
+      sub2api: new Sub2ApiAdminClient(),
+      browser,
+      account: selected,
+    });
+    try {
+      const completed = await importer.run({
+        proxyId: args.proxyId,
+        incognito: true,
+        timeoutMs: args.timeoutMs || 10 * 60_000,
+      });
+      await pool.markGoogleImported(selected.id);
+      console.log(`Google OAuth account ${completed.action} and verified in the Sub2API Antigravity pool.`);
     } catch (error) {
       const outcome = error instanceof GoogleLoginError
         ? error.code

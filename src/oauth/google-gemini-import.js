@@ -34,11 +34,13 @@ async function visible(locator) {
   return locator.isVisible().catch(() => false);
 }
 
-async function detectGoogleOAuthPage(page) {
+async function detectGoogleOAuthPage(page, { allowAntigravity = false } = {}) {
   const host = googleHost(page.url());
   const pathname = googlePath(page.url());
   if (!GOOGLE_HOSTS.has(host)) {
-    return parseCallbackUrl(page.url(), { allowCodeAssist: true }) ? 'redirected' : 'unexpected_redirect';
+    return parseCallbackUrl(page.url(), { allowCodeAssist: true, allowAntigravity })
+      ? 'redirected'
+      : 'unexpected_redirect';
   }
   if (/\/challenge\/(?:totp|authenticator)/.test(pathname)) return 'totp';
   if (/\/challenge\//.test(pathname) && !/\/challenge\/pwd/.test(pathname)) return 'unsupported_challenge';
@@ -99,12 +101,12 @@ class GoogleGeminiOAuthImportFlow {
     this.requestText = requestText;
   }
 
-  async completeLogin(page, { timeoutMs = 5 * 60_000 } = {}) {
+  async completeLogin(page, { timeoutMs = 5 * 60_000, allowAntigravity = false } = {}) {
     const deadline = Date.now() + timeoutMs;
     let submittedRoute = '';
     while (Date.now() < deadline) {
       await assertGoogleLoginHealthy(page);
-      const route = await detectGoogleOAuthPage(page);
+      const route = await detectGoogleOAuthPage(page, { allowAntigravity });
       if (route === 'consent' || route === 'redirected') return { reached: route };
       if (route === 'unexpected_redirect') {
         throw new GoogleLoginError('Google OAuth redirected to an unexpected site', 'unexpected_redirect');

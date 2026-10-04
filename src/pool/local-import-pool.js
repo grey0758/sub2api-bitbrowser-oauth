@@ -210,15 +210,16 @@ function parseGoogleAccountPoolSource(source) {
   String(source || '').split(/\r?\n/).forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) return;
-    const firstSeparator = line.indexOf('|');
-    const lastSeparator = line.lastIndexOf('|');
+    const separator = line.includes('|') ? '|' : '----';
+    const firstSeparator = line.indexOf(separator);
+    const lastSeparator = line.lastIndexOf(separator);
     if (firstSeparator <= 0 || lastSeparator <= firstSeparator) {
       issues.push({ line: index + 1, reason: 'format' });
       return;
     }
     const email = line.slice(0, firstSeparator).trim();
-    const password = line.slice(firstSeparator + 1, lastSeparator);
-    const rawTwoFactor = line.slice(lastSeparator + 1).trim();
+    const password = line.slice(firstSeparator + separator.length, lastSeparator);
+    const rawTwoFactor = line.slice(lastSeparator + separator.length).trim();
     try {
       if (!/^[^\s@]+@[^\s@]+$/.test(email) || !password || !rawTwoFactor) {
         throw new Error('invalid_fields');
@@ -465,6 +466,32 @@ class LocalImportPoolStore {
 
   async importGoogleAccounts(source) {
     return this.importParsedAccounts(parseGoogleAccountPoolSource(source), 'google');
+  }
+
+  async replaceGoogleAccounts(source) {
+    const parsed = parseGoogleAccountPoolSource(source);
+    if (parsed.accounts.length === 0 || parsed.issues.length > 0) {
+      throw new LocalImportPoolError('Google account replacement input is invalid', {
+        code: 'google_replacement_invalid',
+      });
+    }
+    const snapshot = await this.load();
+    const removed = snapshot.accounts.filter((item) => item.provider === 'google').length;
+    snapshot.accounts = snapshot.accounts.filter((item) => item.provider !== 'google');
+    for (const account of parsed.accounts) {
+      snapshot.accounts.push({
+        id: crypto.randomUUID(),
+        ...account,
+        provider: 'google',
+        status: 'stored',
+        attempts: 0,
+        lastAttemptAt: null,
+        lastOutcome: '',
+        importedAt: null,
+      });
+    }
+    await this.save(snapshot);
+    return { removed, added: parsed.accounts.length, total: parsed.accounts.length };
   }
 
   async beginNextGoogleAttempt() {

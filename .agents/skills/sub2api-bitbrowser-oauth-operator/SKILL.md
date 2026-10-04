@@ -1,6 +1,6 @@
 ---
 name: sub2api-bitbrowser-oauth-operator
-description: Use this skill when generating or exchanging a Sub2API OpenAI or Google Gemini OAuth import through the fixed BitBrowser profile named us001_codex. It enforces exact-name matching, provider-isolated encrypted pools, runtime-only administrator credentials, callback-state validation, and status-only logging.
+description: Use this skill when generating or exchanging a Sub2API OpenAI, Google Gemini, or Google Antigravity OAuth import through the fixed BitBrowser profile named us001_codex. It enforces exact-name matching, provider-isolated encrypted pools, runtime-only administrator credentials, callback-state validation, and status-only logging.
 ---
 
 # Sub2API BitBrowser OAuth operator
@@ -27,40 +27,51 @@ description: Use this skill when generating or exchanging a Sub2API OpenAI or Go
    `google_one`, use the supported Gemini auth/exchange endpoints, and require
    the exact `platform=gemini` account name in a fresh final list read before
    marking the row `imported`.
-7. For an explicit login-status-only request, `probe-accounts` may read account
+7. For a Google Antigravity import, use only
+   `/admin/antigravity/oauth/auth-url` and
+   `/admin/antigravity/oauth/exchange-code`, accept only the exact
+   `http://localhost:8085/callback` route with matching state, and require a
+   final exact-name readback with `platform=antigravity`, `type=oauth`, the
+   requested numeric `proxy_id`, priority `1000`, and rate multiplier `1`.
+   Antigravity is not a Gemini OAuth type.
+8. Before replacing the Google queue, copy the existing DPAPI file into a
+   current-user-only `.runtime/backups/` path and verify the ciphertext copy by
+   size and hash. Validate the complete stdin batch before deleting any prior
+   Google rows; do not keep a plaintext intermediate file.
+9. For an explicit login-status-only request, `probe-accounts` may read account
    rows from standard input and stop at OAuth consent or phone verification.
    It must not click consent, claim a phone, wait for or exchange a callback,
    import an account, or persist the input rows.
-8. Retry a prior `account_banned` reauthorization result only after an explicit
+10. Retry a prior `account_banned` reauthorization result only after an explicit
    `reauthorize-errors --retry-banned` request. This does not opt into account
    replacement; `--replace-banned` remains a separate explicit mutation.
-9. When phone verification is shown, poll the SMS API in two six-attempt,
+11. When phone verification is shown, poll the SMS API in two six-attempt,
    one-minute rounds. When the selected phone policy permits, click
    `Resend text message` once only after the first round fails; otherwise do
    not click it. After the second failure, call the injectable no-op
    `PhoneStatusApi.markInvalid` boundary and stop. On Windows, a Node TLS
    transport failure may use the hidden native HTTP fallback; it remains a
    direct API request and must not inherit administrator credentials.
-10. Keep the browser open for review. Only an explicit `--close-window` may
+12. Keep the browser open for review. Only an explicit `--close-window` may
    call the close endpoint; deletion is not implemented.
-11. When using the local queue, persist rows only through current-user Windows
+13. When using the local queue, persist rows only through current-user Windows
    DPAPI in the Git-ignored `.runtime` directory. Enforce the 45-minute phone
    cooldown from actual submission. Respect each phone's resend policy; pool
    imports default to no resend.
-12. Reset phone cooldowns only on an explicit operator request. Preserve the
+14. Reset phone cooldowns only on an explicit operator request. Preserve the
    prior use time, reset time, and reset count in the encrypted pool; never
    restore invalid phones through a cooldown reset.
-13. Restore an invalid-marked phone only after explicit operator confirmation
+15. Restore an invalid-marked phone only after explicit operator confirmation
     through the dedicated correction command, with correction audit fields.
     Change queued-phone resend policy only through its explicit policy command.
-14. Replace a provider-banned Workstation account only after an explicit
+16. Replace a provider-banned Workstation account only after an explicit
     `inventory-ban-and-replace --email` request or `reauthorize-errors
     --replace-banned`. Persist its idempotency key in DPAPI before the request,
     reuse it after an unknown result, and never print ban or replacement rows.
-15. Treat pending-replacement extraction as secret-bearing. The library may
+17. Treat pending-replacement extraction as secret-bearing. The library may
     call it only with an approved private consume callback, then redact its
     returned metadata. Do not expose a CLI that prints or discards the batch.
-16. A Google OAuth run may use `--direct-browser-egress` only after read-only
+18. A Gemini Google OAuth run may use `--direct-browser-egress` only after read-only
     checks prove the fixed profile proxy cannot reach Google while workstation
     direct egress can. This is a launch-only `--no-proxy-server` override; do
     not rewrite the saved proxy. Close exact `us001_codex` only with explicit
@@ -74,6 +85,9 @@ description: Use this skill when generating or exchanging a Sub2API OpenAI or Go
 - For Google, accept only the allowlisted authorization/callback hosts and an
   exact state match. Stop on unsupported verification challenges and never
   expose the encrypted row, OAuth URL/code/state, token response, or cookies.
+- For Antigravity, never accept the Gemini callback or account platform as a
+  substitute. Require port `8085`, exact state, `platform=antigravity`,
+  `type=oauth`, numeric proxy binding, and the `1000/1` policy before success.
 - Do not modify NewAPI channels/abilities, PostgreSQL, Redis, proxy bindings,
   DNS, Cloudflare, or production containers as part of this workflow.
 - If exchange fails, report only a sanitized HTTP/status error and leave the

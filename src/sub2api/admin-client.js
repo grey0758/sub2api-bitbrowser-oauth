@@ -108,6 +108,33 @@ function buildGeminiCredentials(value) {
   return credentials;
 }
 
+function buildAntigravityCredentials(value) {
+  if (!value || typeof value !== 'object') {
+    throw new Sub2ApiError('Sub2API returned no Antigravity credential material');
+  }
+  if (
+    typeof value.access_token !== 'string' || !value.access_token.trim() ||
+    typeof value.refresh_token !== 'string' || !value.refresh_token.trim()
+  ) {
+    throw new Sub2ApiError('Sub2API returned incomplete Antigravity credential material');
+  }
+  const expiresAt = typeof value.expires_at === 'number' && Number.isFinite(value.expires_at)
+    ? Math.floor(value.expires_at).toString()
+    : typeof value.expires_at === 'string' && value.expires_at.trim()
+      ? value.expires_at.trim()
+      : '';
+  if (!expiresAt) throw new Sub2ApiError('Sub2API returned incomplete Antigravity credential material');
+  const credentials = {
+    access_token: value.access_token,
+    refresh_token: value.refresh_token,
+    expires_at: expiresAt,
+  };
+  for (const field of ['token_type', 'project_id', 'email']) {
+    if (value[field]) credentials[field] = value[field];
+  }
+  return credentials;
+}
+
 function normalizeAccountPage(value) {
   if (Array.isArray(value)) return { accounts: value, total: value.length };
   if (!value || typeof value !== 'object') {
@@ -230,6 +257,40 @@ class Sub2ApiAdminClient {
     return this.get('/admin/gemini/oauth/capabilities');
   }
 
+  async generateAntigravityAuthUrl({ proxyId } = {}) {
+    const body = {};
+    if (proxyId != null && proxyId !== '') body.proxy_id = proxyId;
+    const result = await this.post('/admin/antigravity/oauth/auth-url', body);
+    const authUrl = result?.auth_url;
+    const sessionId = result?.session_id;
+    const state = result?.state;
+    let parsed;
+    try { parsed = new URL(authUrl); } catch { /* validated below */ }
+    if (
+      !parsed ||
+      parsed.protocol !== 'https:' ||
+      !['accounts.google.com', 'consent.google.com'].includes(parsed.hostname)
+    ) {
+      throw new Sub2ApiError('Sub2API returned an unexpected Antigravity authorization URL', { data: result });
+    }
+    if (typeof sessionId !== 'string' || !sessionId || typeof state !== 'string' || !state) {
+      throw new Sub2ApiError('Sub2API returned an incomplete Antigravity OAuth session', { data: result });
+    }
+    if (parsed.searchParams.get('state') !== state) {
+      throw new Sub2ApiError('Sub2API returned an inconsistent Antigravity OAuth state');
+    }
+    return { authUrl, sessionId, state };
+  }
+
+  async exchangeAntigravityCode({ sessionId, code, state, proxyId } = {}) {
+    if (!sessionId || !code || !state) {
+      throw new Error('sessionId, code, and state are required for Antigravity OAuth exchange');
+    }
+    const body = { session_id: sessionId, code, state };
+    if (proxyId != null && proxyId !== '') body.proxy_id = proxyId;
+    return this.post('/admin/antigravity/oauth/exchange-code', body);
+  }
+
   async generateGeminiAuthUrl({ proxyId, projectId, oauthType = 'google_one', tierId } = {}) {
     const normalizedType = normalizeGeminiOAuthType(oauthType);
     if (normalizedType === 'code_assist' && !String(projectId || '').trim()) {
@@ -338,6 +399,30 @@ class Sub2ApiAdminClient {
     return matches[0] || null;
   }
 
+  async findAntigravityAccountByName(name, { pageSize = 100 } = {}) {
+    const expected = String(name || '').trim().toLowerCase();
+    if (!expected) throw new TypeError('name is required for Antigravity account lookup');
+    const matches = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const listed = normalizeAccountPage(await this.listAccounts({ page, pageSize }));
+      for (const account of listed.accounts) {
+        if (
+          account?.platform === 'antigravity' &&
+          typeof account.name === 'string' &&
+          account.name.trim().toLowerCase() === expected
+        ) matches.push(account);
+      }
+      if (
+        listed.accounts.length < pageSize ||
+        (listed.total !== undefined && page * pageSize >= listed.total)
+      ) break;
+    }
+    if (matches.length > 1) {
+      throw new Sub2ApiError('Sub2API Antigravity account lookup returned duplicate exact-name matches');
+    }
+    return matches[0] || null;
+  }
+
   async createAccount(body) {
     return this.post('/admin/accounts', body);
   }
@@ -428,6 +513,49 @@ class Sub2ApiAdminClient {
     }
     throw new Sub2ApiError('Sub2API Gemini account import was not visible after the write');
   }
+
+  async importAntigravityOAuthAccount({ email, exchangeResult, proxyId, verifyAttempts = 5 } = {}) {
+    const expectedEmail = String(email || '').trim();
+    if (!expectedEmail) throw new TypeError('email is required for Antigravity account import');
+    if (
+      typeof exchangeResult?.email !== 'string' ||
+      exchangeResult.email.trim().toLowerCase() !== expectedEmail.toLowerCase()
+    ) {
+      throw new Sub2ApiError('Antigravity OAuth exchange identity does not match the selected account');
+    }
+    const credentials = buildAntigravityCredentials(exchangeResult);
+    const existing = await this.findAntigravityAccountByName(expectedEmail);
+    let action;
+    if (existing) {
+      await this.applyOAuthCredentials(existing.id, { type: 'oauth', credentials });
+      action = 'updated';
+    } else {
+      const body = {
+        name: expectedEmail,
+        platform: 'antigravity',
+        type: 'oauth',
+        credentials,
+        priority: 1000,
+        rate_multiplier: 1,
+      };
+      if (proxyId !== undefined && proxyId !== null && proxyId !== '') body.proxy_id = proxyId;
+      await this.createAccount(body);
+      action = 'created';
+    }
+    const attempts = Math.max(1, Number(verifyAttempts) || 1);
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const verified = await this.findAntigravityAccountByName(expectedEmail);
+      if (
+        verified &&
+        verified.type === 'oauth' &&
+        Number(verified.proxy_id) === Number(proxyId) &&
+        Number(verified.priority) === 1000 &&
+        Number(verified.rate_multiplier) === 1
+      ) return { action, accountId: verified.id };
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Sub2ApiError('Sub2API Antigravity account import did not satisfy the required final account state');
+  }
 }
 
 function parseCodeInput(value) {
@@ -446,6 +574,7 @@ module.exports = {
   Sub2ApiAdminClient,
   Sub2ApiError,
   accountEmailCandidates,
+  buildAntigravityCredentials,
   buildOpenAiCredentials,
   buildOpenAiExtraInfo,
   buildGeminiCredentials,

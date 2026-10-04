@@ -45,6 +45,9 @@ const {
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
 } = require('../src/oauth/google-gemini-import');
+const {
+  GoogleAntigravityOAuthImportFlow,
+} = require('../src/oauth/google-antigravity-import');
 const { loadRuntimeEnv, parseRuntimeEnv } = require('../src/runtime-env');
 const {
   WorkstationAutomationClient,
@@ -429,6 +432,11 @@ test('callback parser accepts localhost callback and rejects unrelated URLs', ()
   );
   assert.equal(parseCallbackUrl('https://codeassist.google.com/authcode?code=x'), null);
   assert.equal(parseCallbackUrl('http://localhost:1455/other?code=x'), null);
+  assert.equal(parseCallbackUrl('http://localhost:8085/callback?code=x&state=y'), null);
+  assert.deepEqual(
+    parseCallbackUrl('http://localhost:8085/callback?code=x&state=y', { allowAntigravity: true }),
+    { code: 'x', state: 'y' }
+  );
 });
 
 test('Sub2API Gemini OAuth uses the supported endpoints and verifies account creation', async () => {
@@ -487,6 +495,69 @@ test('Sub2API Gemini OAuth uses the supported endpoints and verifies account cre
   assert.equal(createBody.type, 'oauth');
   assert.equal(createBody.proxy_id, 7);
   assert.equal(createBody.credentials.expires_at, '1700000000');
+});
+
+test('Sub2API Antigravity OAuth uses its dedicated endpoints and verifies platform-specific creation', async () => {
+  const calls = [];
+  let created = false;
+  const fetchImpl = async (url, options) => {
+    const parsed = new URL(url);
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push([options.method, parsed.pathname, body]);
+    if (parsed.pathname.endsWith('/admin/antigravity/oauth/auth-url')) {
+      return new Response(JSON.stringify({ code: 0, data: {
+        auth_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=ag-state',
+        session_id: 'ag-session',
+        state: 'ag-state',
+      } }), { status: 200 });
+    }
+    if (parsed.pathname.endsWith('/admin/antigravity/oauth/exchange-code')) {
+      return new Response(JSON.stringify({ code: 0, data: {
+        access_token: 'access-token',
+        refresh_token: 'refresh-token',
+        expires_at: 1_700_000_000,
+        email: 'google@example.com',
+      } }), { status: 200 });
+    }
+    if (parsed.pathname.endsWith('/admin/accounts') && options.method === 'GET') {
+      const accounts = created
+        ? [{
+          id: 12,
+          name: 'google@example.com',
+          platform: 'antigravity',
+          type: 'oauth',
+          proxy_id: 7,
+          priority: 1000,
+          rate_multiplier: 1,
+        }]
+        : [];
+      return new Response(JSON.stringify({ code: 0, data: { items: accounts, total: accounts.length } }), { status: 200 });
+    }
+    if (parsed.pathname.endsWith('/admin/accounts') && options.method === 'POST') {
+      created = true;
+      return new Response(JSON.stringify({ code: 0, data: { id: 12 } }), { status: 200 });
+    }
+    throw new Error(`unexpected request: ${options.method} ${parsed.pathname}`);
+  };
+  const client = new Sub2ApiAdminClient({ apiKey: 'runtime-only', fetchImpl });
+  const authorization = await client.generateAntigravityAuthUrl({ proxyId: 7 });
+  const exchanged = await client.exchangeAntigravityCode({
+    sessionId: authorization.sessionId,
+    code: 'callback-code',
+    state: authorization.state,
+    proxyId: 7,
+  });
+  assert.deepEqual(await client.importAntigravityOAuthAccount({
+    email: 'google@example.com',
+    exchangeResult: exchanged,
+    proxyId: 7,
+  }), { action: 'created', accountId: 12 });
+  const createBody = calls.find((item) => item[0] === 'POST' && item[1].endsWith('/admin/accounts'))[2];
+  assert.equal(createBody.platform, 'antigravity');
+  assert.equal(createBody.type, 'oauth');
+  assert.equal(createBody.proxy_id, 7);
+  assert.equal(createBody.priority, 1000);
+  assert.equal(createBody.rate_multiplier, 1);
 });
 
 test('Gemini credential validation and Google HTTPS two-factor retrieval are bounded', async () => {
@@ -1480,6 +1551,29 @@ test('local pool defers rejected Google credentials for 24 hours', async () => {
     clock += GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS + 1;
     const retried = await store.beginNextGoogleAttempt();
     assert.equal(retried.id, first.id);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('local pool atomically replaces old Google rows and accepts dashed private input', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-google-replace-'));
+  const file = path.join(directory, 'pool.dpapi');
+  const protect = async (plainText) => Buffer.from(plainText, 'utf8').toString('base64');
+  const unprotect = async (cipherText) => Buffer.from(cipherText, 'base64').toString('utf8');
+  const store = new LocalImportPoolStore({ file, protect, unprotect });
+  try {
+    await store.importGoogleAccounts('old@example.com|old-password|JBSWY3DPEHPK3PXP');
+    assert.deepEqual(await store.replaceGoogleAccounts([
+      'first@example.com----new-password----JBSWY3DPEHPK3PXP',
+      'second@example.com----new-password----KRSXG5DSNFXGOIDB',
+    ].join('\n')), { removed: 1, added: 2, total: 2 });
+    const snapshot = await store.load();
+    assert.deepEqual(snapshot.accounts.map((item) => item.email), [
+      'first@example.com',
+      'second@example.com',
+    ]);
+    assert.equal(fs.readFileSync(file, 'utf8').includes('new-password'), false);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
