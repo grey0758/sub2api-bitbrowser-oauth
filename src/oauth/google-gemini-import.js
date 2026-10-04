@@ -25,6 +25,11 @@ function googlePath(value) {
   try { return new URL(value).pathname.toLowerCase(); } catch { return ''; }
 }
 
+function isAllowedGoogleOAuthLocation(value) {
+  const host = googleHost(value);
+  return GOOGLE_HOSTS.has(host) || host === 'codeassist.google.com';
+}
+
 async function visible(locator) {
   return locator.isVisible().catch(() => false);
 }
@@ -161,12 +166,22 @@ class GoogleGeminiOAuthImportFlow {
     let session;
     try {
       session = await this.browser.open({
-        url: authorization.authUrl,
         incognito,
         directEgress: directBrowserEgress,
-        waitUntil: 'commit',
         timeoutMs: Math.min(timeoutMs, 90_000),
       });
+      try {
+        await session.goto(authorization.authUrl, {
+          waitUntil: 'commit',
+          timeout: Math.min(timeoutMs, 90_000),
+        });
+      } catch (error) {
+        // Chromium reports ERR_ABORTED for some successful Google redirect
+        // hand-offs. Continue only when the page itself proves it stayed on
+        // the exact authorization/callback host allowlist.
+        const aborted = /net::ERR_ABORTED\b/.test(String(error?.message || ''));
+        if (!aborted || !isAllowedGoogleOAuthLocation(session.page.url())) throw error;
+      }
     } catch {
       // Playwright navigation errors include the complete OAuth URL (and its
       // state) in their message. Convert them at this boundary so neither the
@@ -229,5 +244,6 @@ module.exports = {
   GoogleLoginError,
   assertGoogleLoginHealthy,
   detectGoogleOAuthPage,
+  isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
 };

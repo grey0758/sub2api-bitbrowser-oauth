@@ -40,7 +40,9 @@ const {
   windowsSmsRequest,
 } = require('../src/oauth/account-import');
 const {
+  GoogleGeminiOAuthImportFlow,
   GoogleLoginError,
+  isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
 } = require('../src/oauth/google-gemini-import');
 const { loadRuntimeEnv, parseRuntimeEnv } = require('../src/runtime-env');
@@ -514,7 +516,7 @@ test('Gemini credential validation and Google HTTPS two-factor retrieval are bou
 
 test('Google OAuth navigation failures are sanitized before reaching the CLI', async () => {
   let released = false;
-  const flow = new (require('../src/oauth/google-gemini-import').GoogleGeminiOAuthImportFlow)({
+  const flow = new GoogleGeminiOAuthImportFlow({
     sub2api: {
       async generateGeminiAuthUrl() {
         return {
@@ -527,7 +529,12 @@ test('Google OAuth navigation failures are sanitized before reaching the CLI', a
     },
     browser: {
       async open() {
-        throw new Error('page.goto failed at https://accounts.google.com/?state=secret-state');
+        return {
+          page: { url: () => 'about:blank' },
+          async goto() {
+            throw new Error('page.goto failed at https://accounts.google.com/?state=secret-state');
+          },
+        };
       },
       async release() { released = true; },
     },
@@ -545,6 +552,46 @@ test('Google OAuth navigation failures are sanitized before reaching the CLI', a
       !error.message.includes('secret-state')
   );
   assert.equal(released, true);
+});
+
+test('Google OAuth tolerates ERR_ABORTED only on an allowlisted Google location', async () => {
+  assert.equal(isAllowedGoogleOAuthLocation('https://accounts.google.com/signin'), true);
+  assert.equal(isAllowedGoogleOAuthLocation('https://codeassist.google.com/authcode'), true);
+  assert.equal(isAllowedGoogleOAuthLocation('https://accounts.google.example/signin'), false);
+
+  let pageUrl = 'https://accounts.google.com/signin';
+  let released = false;
+  const session = {
+    page: { url: () => pageUrl },
+    async goto() { throw new Error('page.goto: net::ERR_ABORTED at a redacted URL'); },
+  };
+  const flow = new GoogleGeminiOAuthImportFlow({
+    sub2api: {
+      async generateGeminiAuthUrl() {
+        return {
+          authUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=secret-state',
+          sessionId: 'session',
+          state: 'secret-state',
+          oauthType: 'google_one',
+        };
+      },
+    },
+    browser: {
+      async open() { return session; },
+      async release() { released = true; },
+    },
+    account: {
+      email: 'google@example.com',
+      password: 'runtime-only',
+      twoFactor: { kind: 'totp-secret', value: 'JBSWY3DPEHPK3PXP' },
+    },
+  });
+  flow.completeLogin = async () => { throw new GoogleLoginError('stop after navigation proof', 'manual_challenge'); };
+  await assert.rejects(() => flow.run(), (error) => error.code === 'manual_challenge');
+  assert.equal(released, true);
+
+  pageUrl = 'https://attacker.example/';
+  await assert.rejects(() => flow.run(), (error) => error.code === 'navigation_failed');
 });
 
 test('callback waiter captures the localhost request before Chrome replaces the URL', async () => {
