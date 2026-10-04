@@ -14,6 +14,7 @@ const POOL_VERSION = 2;
 const LEGACY_POOL_VERSION = 1;
 const ACCOUNT_PROVIDERS = new Set(['openai', 'google']);
 const PHONE_COOLDOWN_MS = 45 * 60_000;
+const GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS = 24 * 60 * 60_000;
 const DEFAULT_POOL_FILE = path.resolve(__dirname, '..', '..', '.runtime', 'import-pool.dpapi');
 const DEFAULT_GOOGLE_POOL_FILE = path.resolve(
   __dirname,
@@ -472,6 +473,11 @@ class LocalImportPoolStore {
       const account = snapshot.accounts.find((item) => (
         item.provider === 'google' &&
         item.status === 'stored' &&
+        !(
+          item.lastOutcome === 'invalid_credentials' &&
+          Number.isFinite(item.lastAttemptAt) &&
+          item.lastAttemptAt + GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS > now
+        ) &&
         (!Number.isFinite(item.nextAttemptAt) || item.nextAttemptAt <= now)
       ));
       if (!account) {
@@ -984,6 +990,7 @@ module.exports = {
   DEFAULT_POOL_FILE,
   DEFAULT_GOOGLE_POOL_FILE,
   DPAPI_PREFIX,
+  GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS,
   LocalImportPoolError,
   LocalImportPoolStore,
   PHONE_COOLDOWN_MS,

@@ -25,6 +25,7 @@ const {
 const { WorkstationInventoryImportCoordinator } = require('../src/workstation/inventory-import');
 const {
   DEFAULT_GOOGLE_POOL_FILE,
+  GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS,
   LocalImportPoolError,
   LocalImportPoolStore,
   parseAccountPoolSource,
@@ -279,7 +280,13 @@ async function main(argv = process.argv.slice(2)) {
           ? 'sub2api_error'
           : 'failed';
       await pool.markGoogleStored(selected.id, outcome, {
-        retryAfterMs: error instanceof GoogleLoginError && error.code === 'rate_limited' ? 15 * 60_000 : 0,
+        retryAfterMs: error instanceof GoogleLoginError
+          ? error.code === 'rate_limited'
+            ? 15 * 60_000
+            : error.code === 'invalid_credentials'
+              ? GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS
+              : 0
+          : 0,
       }).catch(() => {});
       throw error;
     }

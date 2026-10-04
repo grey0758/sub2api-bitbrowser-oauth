@@ -173,7 +173,9 @@ pool, while duplicates inside one provider are ignored.
 HTTPS code-access URL; the encrypted row records which kind it is. The import
 command selects only a `stored` row, and changes it to `imported` only after
 the exact Gemini account-list postcondition passes. A failed attempt returns
-the row to `stored`; a Google rate-limit result adds a 15-minute retry delay.
+the row to `stored`; a Google rate-limit result adds a 15-minute retry delay,
+while explicitly rejected credentials remain encrypted and are deferred for 24
+hours before they are eligible again.
 `pool-google-status` prints counts only.
 Private-history recovery must stream extracted rows directly to this command;
 never save a transcript or plaintext credential export in the repository.

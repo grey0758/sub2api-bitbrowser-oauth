@@ -110,7 +110,8 @@ profile and the Sub2API OpenAI OAuth account-import flow.
 5. Create or update only the exact `platform=gemini` account name through the
    supported account endpoints. Mark the encrypted row `imported` only after a
    fresh account list proves the exact name exists. Return failures to
-   `stored`; defer a rate-limited row for 15 minutes.
+   `stored`; defer a rate-limited row for 15 minutes and explicitly rejected
+   credentials for 24 hours.
 6. Never print the Google row, OAuth URL, callback code/state, token response,
    cookies, password, or two-factor value. Leave the browser profile open.
 7. Use `--direct-browser-egress` only after proving the saved profile proxy

@@ -59,6 +59,7 @@ const {
 } = require('../src/sub2api/account-health');
 const {
   DEFAULT_GOOGLE_POOL_FILE,
+  GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS,
   LocalImportPoolStore,
   PHONE_COOLDOWN_MS,
   POOL_VERSION,
@@ -1441,6 +1442,34 @@ test('local pool isolates Google credentials from OpenAI selection and permits c
       google: { total: 1, stored: 0, imported: 1 },
     });
     await assert.rejects(() => store.beginNextGoogleAttempt(), /No stored Google account/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('local pool defers rejected Google credentials for 24 hours', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-google-backoff-'));
+  const file = path.join(directory, 'pool.dpapi');
+  const protect = async (plainText) => Buffer.from(plainText, 'utf8').toString('base64');
+  const unprotect = async (cipherText) => Buffer.from(cipherText, 'base64').toString('utf8');
+  let clock = Date.parse('2026-10-04T00:00:00Z');
+  const store = new LocalImportPoolStore({ file, protect, unprotect, now: () => clock });
+  try {
+    await store.importGoogleAccounts([
+      'first@example.com|runtime-password|JBSWY3DPEHPK3PXP',
+      'second@example.com|runtime-password|JBSWY3DPEHPK3PXP',
+    ].join('\n'));
+
+    const first = await store.beginNextGoogleAttempt();
+    assert.equal(first.email, 'first@example.com');
+    await store.markGoogleStored(first.id, 'invalid_credentials');
+
+    const second = await store.beginNextGoogleAttempt();
+    assert.equal(second.email, 'second@example.com');
+
+    clock += GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS + 1;
+    const retried = await store.beginNextGoogleAttempt();
+    assert.equal(retried.id, first.id);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
