@@ -113,6 +113,12 @@ profile and the Sub2API OpenAI OAuth account-import flow.
    `stored`; defer a rate-limited row for 15 minutes.
 6. Never print the Google row, OAuth URL, callback code/state, token response,
    cookies, password, or two-factor value. Leave the browser profile open.
+7. Use `--direct-browser-egress` only after proving the saved profile proxy
+   cannot reach Google and the workstation direct route can. It is a
+   launch-only `--no-proxy-server` override, not permission to edit the saved
+   proxy. Because it requires a stopped window, close exact `us001_codex` only
+   with explicit owner authorization and immediately reopen it for the bounded
+   OAuth attempt.
 
 ### Controlled deletion
 

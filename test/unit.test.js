@@ -761,6 +761,35 @@ test('incognito mode passes the launch argument and creates an isolated context'
   ]);
 });
 
+test('direct browser egress is an explicit launch-only option on the exact profile', async () => {
+  const calls = [];
+  const context = {
+    pages: () => [{ goto: async () => {} }],
+    close: async () => {},
+  };
+  const browser = {
+    newContext: async () => context,
+    contexts: () => [],
+    close: async () => {},
+  };
+  const controller = new FixedWindowController({
+    client: {
+      listWindows: async () => [{ id: 'fixed', name: 'us001_codex', status: 0 }],
+      openWindow: async (id, options) => {
+        calls.push({ id, options });
+        return { ws: 'ws://fixed' };
+      },
+    },
+    chromiumImpl: { connectOverCDP: async () => browser },
+  });
+  await controller.open({ incognito: true, directEgress: true });
+  assert.deepEqual(calls, [{
+    id: 'fixed',
+    options: { args: ['--incognito', '--no-proxy-server'] },
+  }]);
+  await controller.release();
+});
+
 test('CLI accepts and documents incognito mode', () => {
   assert.deepEqual(parseArgs(['start', '--incognito', '--proxy-id', 'proxy']), {
     command: 'start',

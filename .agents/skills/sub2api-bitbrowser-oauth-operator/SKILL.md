@@ -60,6 +60,11 @@ description: Use this skill when generating or exchanging a Sub2API OpenAI or Go
 15. Treat pending-replacement extraction as secret-bearing. The library may
     call it only with an approved private consume callback, then redact its
     returned metadata. Do not expose a CLI that prints or discards the batch.
+16. A Google OAuth run may use `--direct-browser-egress` only after read-only
+    checks prove the fixed profile proxy cannot reach Google while workstation
+    direct egress can. This is a launch-only `--no-proxy-server` override; do
+    not rewrite the saved proxy. Close exact `us001_codex` only with explicit
+    owner authorization, then immediately reopen it for the bounded attempt.
 
 ## Verification and failure handling
 

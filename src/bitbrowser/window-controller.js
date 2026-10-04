@@ -33,10 +33,19 @@ class FixedWindowController {
     return matches[0];
   }
 
-  async open({ url, incognito = false, waitUntil = 'domcontentloaded', timeoutMs = 60_000 } = {}) {
+  async open({
+    url,
+    incognito = false,
+    directEgress = false,
+    waitUntil = 'domcontentloaded',
+    timeoutMs = 60_000,
+  } = {}) {
     if (this.session) return this.session;
     const window = await this.findExact();
-    const opened = await this.client.openWindow(window.id, incognito ? { args: ['--incognito'] } : {});
+    const args = [];
+    if (incognito) args.push('--incognito');
+    if (directEgress) args.push('--no-proxy-server');
+    const opened = await this.client.openWindow(window.id, args.length > 0 ? { args } : {});
     const browser = await this.chromium.connectOverCDP(opened.ws, { timeout: this.connectTimeoutMs });
     // The launch argument only takes effect when BitBrowser starts the window.
     // Create an isolated context as well so an already-open fixed window does

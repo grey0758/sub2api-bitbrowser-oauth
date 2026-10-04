@@ -132,6 +132,15 @@ OAuth client capability. Optional `--proxy-id` and `--tier-id` are passed only
 to the supported Sub2API endpoints. Unexpected Google challenges stop for
 owner review instead of weakening verification.
 
+If a read-only check proves the fixed profile's configured proxy cannot reach
+Google while the workstation's direct route can, an operator may explicitly
+close that exact profile and run the command once with
+`--direct-browser-egress`. This adds Chromium's launch-only
+`--no-proxy-server` flag; it does not rewrite, clear, or delete the saved
+BitBrowser profile or its proxy settings. The option is ineffective for an
+already-running window, so closing the exact profile requires explicit owner
+authorization. The window remains open after the OAuth attempt.
+
 ## Encrypted local import pool
 
 Pending accounts and phone/SMS pairs can be fed through stdin into a local

@@ -149,6 +149,7 @@ class GoogleGeminiOAuthImportFlow {
     oauthType = 'google_one',
     tierId,
     incognito = true,
+    directBrowserEgress = false,
     timeoutMs = 10 * 60_000,
   } = {}) {
     const authorization = await this.sub2api.generateGeminiAuthUrl({
@@ -162,6 +163,7 @@ class GoogleGeminiOAuthImportFlow {
       session = await this.browser.open({
         url: authorization.authUrl,
         incognito,
+        directEgress: directBrowserEgress,
         waitUntil: 'commit',
         timeoutMs: Math.min(timeoutMs, 90_000),
       });

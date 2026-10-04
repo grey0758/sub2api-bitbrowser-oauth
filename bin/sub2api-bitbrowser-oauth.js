@@ -48,6 +48,7 @@ function parseArgs(argv) {
     else if (item === '--oauth-type') args.oauthType = String(argv[++i] || '').trim();
     else if (item === '--project-id') args.projectId = String(argv[++i] || '').trim();
     else if (item === '--tier-id') args.tierId = String(argv[++i] || '').trim();
+    else if (item === '--direct-browser-egress') args.directBrowserEgress = true;
     else if (item === '--retry-failed') args.retryFailed = true;
     else if (item === '--retry-banned') args.retryBanned = true;
     else if (item === '--replace-banned') args.replaceBanned = true;
@@ -79,7 +80,7 @@ function usage() {
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-google-accounts < google-accounts.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-status',
     '  node bin/sub2api-bitbrowser-oauth.js pool-google-status',
-    '  node bin/sub2api-bitbrowser-oauth.js google-oauth-import-next [--oauth-type google_one|code_assist|ai_studio] [--project-id ID] [--tier-id ID] [--proxy-id ID] [--timeout-ms N]',
+    '  node bin/sub2api-bitbrowser-oauth.js google-oauth-import-next [--oauth-type google_one|code_assist|ai_studio] [--project-id ID] [--tier-id ID] [--proxy-id ID] [--direct-browser-egress] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js pool-reset-phone-cooldowns',
     '  node bin/sub2api-bitbrowser-oauth.js pool-correct-invalid-phone',
     '  node bin/sub2api-bitbrowser-oauth.js pool-enable-resend',
@@ -266,6 +267,7 @@ async function main(argv = process.argv.slice(2)) {
         oauthType: args.oauthType || 'google_one',
         tierId: args.tierId,
         incognito: true,
+        directBrowserEgress: Boolean(args.directBrowserEgress),
         timeoutMs: args.timeoutMs || 10 * 60_000,
       });
       await pool.markGoogleImported(selected.id);
