@@ -67,8 +67,10 @@ function usage() {
     '  node bin/sub2api-bitbrowser-oauth.js account-health-audit',
     '  node bin/sub2api-bitbrowser-oauth.js reauthorize-errors [--email EMAIL] [--retry-failed] [--retry-banned] [--replace-banned] [--incognito] [--proxy-id ID] [--timeout-ms N] [--limit N]',
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-phones < phones.txt',
-    '  node bin/sub2api-bitbrowser-oauth.js pool-import-accounts < accounts.txt',
+    '  node bin/sub2api-bitbrowser-oauth.js pool-import-accounts < openai-accounts.txt',
+    '  node bin/sub2api-bitbrowser-oauth.js pool-import-google-accounts < google-accounts.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-status',
+    '  node bin/sub2api-bitbrowser-oauth.js pool-google-status',
     '  node bin/sub2api-bitbrowser-oauth.js pool-reset-phone-cooldowns',
     '  node bin/sub2api-bitbrowser-oauth.js pool-correct-invalid-phone',
     '  node bin/sub2api-bitbrowser-oauth.js pool-enable-resend',
@@ -137,22 +139,36 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  if (args.command === 'pool-import-phones' || args.command === 'pool-import-accounts') {
+  if (
+    args.command === 'pool-import-phones' ||
+    args.command === 'pool-import-accounts' ||
+    args.command === 'pool-import-google-accounts'
+  ) {
     const source = await readStdin();
     const pool = new LocalImportPoolStore();
     const result = args.command === 'pool-import-phones'
       ? await pool.importPhones(source)
-      : await pool.importAccounts(source);
+      : args.command === 'pool-import-google-accounts'
+        ? await pool.importGoogleAccounts(source)
+        : await pool.importAccounts(source);
     console.log(`Local pool updated: added=${result.added}; rejected=${result.rejected}; total=${result.total}.`);
     return;
   }
-  if (args.command === 'pool-status') {
+  if (args.command === 'pool-status' || args.command === 'pool-google-status') {
     const summary = await new LocalImportPoolStore().summary();
+    if (args.command === 'pool-google-status') {
+      console.log(
+        `Local Google pool status: total=${summary.accounts.google.total}; ` +
+        `stored=${summary.accounts.google.stored}.`
+      );
+      return;
+    }
     console.log(
       `Local pool status: phones total=${summary.phones.total}, available=${summary.phones.available}, ` +
       `cooldown=${summary.phones.cooldown}, invalid=${summary.phones.invalid}; ` +
-      `accounts total=${summary.accounts.total}, pending=${summary.accounts.pending}, ` +
-      `imported=${summary.accounts.imported}.`
+      `OpenAI accounts total=${summary.accounts.openai.total}, pending=${summary.accounts.openai.pending}, ` +
+      `imported=${summary.accounts.openai.imported}; Google accounts total=${summary.accounts.google.total}, ` +
+      `stored=${summary.accounts.google.stored}; all accounts total=${summary.accounts.total}.`
     );
     return;
   }
@@ -215,9 +231,14 @@ async function main(argv = process.argv.slice(2)) {
     const pool = new LocalImportPoolStore();
     const accounts = await sub2api.listAllAccounts();
     const snapshot = await pool.load();
-    const audit = buildAccountHealthAudit(accounts, snapshot.accounts, snapshot.accountHealthAudit, {
+    const audit = buildAccountHealthAudit(
+      accounts,
+      snapshot.accounts.filter((item) => item.provider === 'openai'),
+      snapshot.accountHealthAudit,
+      {
       sourceBaseUrl: sub2api.baseUrl,
-    });
+      }
+    );
     const result = await pool.saveAccountHealthAudit(audit);
     console.log(
       `Account health audit saved in the encrypted pool: total=${result.total}; ` +
@@ -455,7 +476,11 @@ async function main(argv = process.argv.slice(2)) {
     const pool = new LocalImportPoolStore();
     const snapshot = await pool.load();
     const audit = snapshot.accountHealthAudit?.entries || [];
-    const poolByEmail = new Map(snapshot.accounts.map((item) => [item.email.trim().toLowerCase(), item]));
+    const poolByEmail = new Map(
+      snapshot.accounts
+        .filter((item) => item.provider === 'openai')
+        .map((item) => [item.email.trim().toLowerCase(), item])
+    );
     const limit = args.limit === undefined ? Number.POSITIVE_INFINITY : Math.max(1, Math.min(100, Number(args.limit) || 1));
     const requestedEmail = String(args.email || '').trim().toLowerCase();
     const retryableOutcomes = args.retryFailed

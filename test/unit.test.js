@@ -52,7 +52,9 @@ const {
 const {
   LocalImportPoolStore,
   PHONE_COOLDOWN_MS,
+  POOL_VERSION,
   parseAccountPoolSource,
+  parseGoogleAccountPoolSource,
   parsePhonePoolSource,
 } = require('../src/pool/local-import-pool');
 const { parseArgs, safeError, usage } = require('../bin/sub2api-bitbrowser-oauth');
@@ -1084,6 +1086,18 @@ test('local pool parsers validate phone URLs, TOTP secrets, and no-resend policy
   ].join('\n'));
   assert.equal(accounts.accounts.length, 1);
   assert.equal(accounts.issues.length, 1);
+
+  const googleAccounts = parseGoogleAccountPoolSource([
+    'google-url@example.com|runtime-password|https://two-factor.example.invalid/access?id=runtime-only',
+    'google-totp@example.com|runtime-password|JBSWY3DPEHPK3PXP',
+    'invalid@example.com|runtime-password|http://two-factor.example.invalid/access',
+  ].join('\n'));
+  assert.equal(googleAccounts.accounts.length, 2);
+  assert.deepEqual(
+    googleAccounts.accounts.map((item) => item.twoFactor.kind),
+    ['https-url', 'totp-secret']
+  );
+  assert.equal(googleAccounts.issues.length, 1);
 });
 
 test('local pool encrypts its file and enforces the 45-minute phone cooldown', async () => {
@@ -1141,7 +1155,11 @@ test('local pool encrypts its file and enforces the 45-minute phone cooldown', a
     clock += PHONE_COOLDOWN_MS;
     assert.equal((await store.summary()).phones.available, 1);
     await store.markAccountImported(selected.account.id);
-    assert.deepEqual((await store.summary()).accounts, { total: 1, pending: 0, imported: 1 });
+    assert.deepEqual((await store.summary()).accounts, {
+      total: 1,
+      openai: { total: 1, pending: 0, imported: 1 },
+      google: { total: 0, stored: 0 },
+    });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -1167,7 +1185,80 @@ test('Workstation inventory sync keeps account secrets encrypted and retires rem
     });
     const selected = await store.beginNextAccountAttempt();
     assert.equal(selected.email, 'second@example.com');
-    assert.equal((await store.summary()).accounts.pending, 1);
+    assert.equal((await store.summary()).accounts.openai.pending, 1);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('local pool isolates Google credentials from OpenAI selection and permits cross-provider emails', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-provider-pool-'));
+  const file = path.join(directory, 'pool.dpapi');
+  const protect = async (plainText) => Buffer.from(plainText, 'utf8').toString('base64');
+  const unprotect = async (cipherText) => Buffer.from(cipherText, 'base64').toString('utf8');
+  const store = new LocalImportPoolStore({ file, protect, unprotect });
+  const openAiRow = 'shared@example.com|runtime-password|JBSWY3DPEHPK3PXP';
+  const googleRow = 'shared@example.com|runtime-password|https://two-factor.example.invalid/access?id=runtime-only';
+  try {
+    assert.deepEqual(await store.importAccounts(openAiRow), { added: 1, rejected: 0, total: 1 });
+    assert.deepEqual(await store.importGoogleAccounts(googleRow), { added: 1, rejected: 0, total: 1 });
+    assert.deepEqual(await store.importGoogleAccounts(googleRow), { added: 0, rejected: 0, total: 1 });
+
+    const snapshot = await store.load();
+    assert.equal(snapshot.version, POOL_VERSION);
+    assert.equal(snapshot.accounts.length, 2);
+    assert.deepEqual(
+      snapshot.accounts.map((item) => [item.provider, item.status]).sort(),
+      [['google', 'stored'], ['openai', 'pending']]
+    );
+    assert.equal(snapshot.accounts.find((item) => item.provider === 'google').twoFactor.kind, 'https-url');
+    assert.equal(fs.readFileSync(file, 'utf8').includes('runtime-password'), false);
+
+    const selected = await store.beginNextAccountAttempt();
+    assert.equal(selected.provider, 'openai');
+    const google = await store.findAccountByEmail('shared@example.com', { provider: 'google' });
+    await assert.rejects(
+      () => store.markAccountPending(google.id),
+      (error) => error.code === 'account_provider_mismatch'
+    );
+    assert.deepEqual((await store.summary()).accounts, {
+      total: 2,
+      openai: { total: 1, pending: 1, imported: 0 },
+      google: { total: 1, stored: 1 },
+    });
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('local pool migrates version 1 account rows to the OpenAI provider', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-provider-migration-'));
+  const file = path.join(directory, 'pool.dpapi');
+  const protect = async (plainText) => Buffer.from(plainText, 'utf8').toString('base64');
+  const unprotect = async (cipherText) => Buffer.from(cipherText, 'base64').toString('utf8');
+  const legacy = {
+    version: 1,
+    phones: [],
+    accounts: [{
+      id: 'legacy-account',
+      email: 'legacy@example.com',
+      password: 'runtime-password',
+      totpSecret: 'JBSWY3DPEHPK3PXP',
+      status: 'pending',
+      attempts: 0,
+      lastAttemptAt: null,
+      lastOutcome: '',
+      importedAt: null,
+    }],
+    accountHealthAudit: null,
+  };
+  fs.writeFileSync(file, `dpapi-v1:${Buffer.from(JSON.stringify(legacy), 'utf8').toString('base64')}`);
+  const store = new LocalImportPoolStore({ file, protect, unprotect });
+  try {
+    const migrated = await store.load();
+    assert.equal(migrated.version, POOL_VERSION);
+    assert.equal(migrated.accounts[0].provider, 'openai');
+    assert.equal((await store.beginNextAccountAttempt()).provider, 'openai');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

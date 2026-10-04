@@ -23,6 +23,8 @@
     "pool-status": "node bin/sub2api-bitbrowser-oauth.js pool-status",
     "pool-import-phones": "node bin/sub2api-bitbrowser-oauth.js pool-import-phones",
     "pool-import-accounts": "node bin/sub2api-bitbrowser-oauth.js pool-import-accounts",
+    "pool-import-google-accounts": "node bin/sub2api-bitbrowser-oauth.js pool-import-google-accounts",
+    "pool-google-status": "node bin/sub2api-bitbrowser-oauth.js pool-google-status",
     "pool-reset-phone-cooldowns": "node bin/sub2api-bitbrowser-oauth.js pool-reset-phone-cooldowns",
     "pool-correct-invalid-phone": "node bin/sub2api-bitbrowser-oauth.js pool-correct-invalid-phone",
     "pool-enable-resend": "node bin/sub2api-bitbrowser-oauth.js pool-enable-resend",

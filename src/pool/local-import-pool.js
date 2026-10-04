@@ -10,7 +10,9 @@ const {
   normalizeUsPhoneNumber,
 } = require('../oauth/account-import');
 
-const POOL_VERSION = 1;
+const POOL_VERSION = 2;
+const LEGACY_POOL_VERSION = 1;
+const ACCOUNT_PROVIDERS = new Set(['openai', 'google']);
 const PHONE_COOLDOWN_MS = 45 * 60_000;
 const DEFAULT_POOL_FILE = path.resolve(__dirname, '..', '..', '.runtime', 'import-pool.dpapi');
 const DPAPI_PREFIX = 'dpapi-v1:';
@@ -28,6 +30,22 @@ class LocalImportPoolError extends Error {
 
 function emptySnapshot() {
   return { version: POOL_VERSION, phones: [], accounts: [], accountHealthAudit: null };
+}
+
+function accountIdentity(account) {
+  return `${account.provider}\u0000${account.email.trim().toLowerCase()}`;
+}
+
+function migrateSnapshot(value) {
+  if (!value || typeof value !== 'object') return value;
+  if (value.version === LEGACY_POOL_VERSION && Array.isArray(value.accounts)) {
+    return {
+      ...value,
+      version: POOL_VERSION,
+      accounts: value.accounts.map((account) => ({ ...account, provider: 'openai' })),
+    };
+  }
+  return value;
 }
 
 function restrictedPowerShellEnv() {
@@ -177,7 +195,49 @@ function parseAccountPoolSource(source) {
   return { accounts, issues };
 }
 
+function parseGoogleAccountPoolSource(source) {
+  const accounts = [];
+  const issues = [];
+  const seen = new Set();
+  String(source || '').split(/\r?\n/).forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) return;
+    const firstSeparator = line.indexOf('|');
+    const lastSeparator = line.lastIndexOf('|');
+    if (firstSeparator <= 0 || lastSeparator <= firstSeparator) {
+      issues.push({ line: index + 1, reason: 'format' });
+      return;
+    }
+    const email = line.slice(0, firstSeparator).trim();
+    const password = line.slice(firstSeparator + 1, lastSeparator);
+    const rawTwoFactor = line.slice(lastSeparator + 1).trim();
+    try {
+      if (!/^[^\s@]+@[^\s@]+$/.test(email) || !password || !rawTwoFactor) {
+        throw new Error('invalid_fields');
+      }
+      let twoFactor;
+      try {
+        const accessUrl = new URL(rawTwoFactor);
+        if (accessUrl.protocol !== 'https:') throw new Error('https_required');
+        twoFactor = { kind: 'https-url', value: accessUrl.href };
+      } catch {
+        const secret = normalizeTotpSecret(rawTwoFactor);
+        generateTotp(secret, 59_000);
+        twoFactor = { kind: 'totp-secret', value: secret };
+      }
+      const identity = email.toLowerCase();
+      if (seen.has(identity)) return;
+      seen.add(identity);
+      accounts.push({ email, password, twoFactor });
+    } catch {
+      issues.push({ line: index + 1, reason: 'invalid_account' });
+    }
+  });
+  return { accounts, issues };
+}
+
 function normalizeSnapshot(value) {
+  value = migrateSnapshot(value);
   if (
     !value ||
     typeof value !== 'object' ||
@@ -202,10 +262,28 @@ function normalizeSnapshot(value) {
   for (const account of value.accounts) {
     if (
       typeof account?.id !== 'string' ||
+      !ACCOUNT_PROVIDERS.has(account.provider) ||
       typeof account.email !== 'string' ||
       typeof account.password !== 'string' ||
-      typeof account.totpSecret !== 'string' ||
-      !['pending', 'imported'].includes(account.status) ||
+      !(
+        (
+          account.provider === 'openai' &&
+          typeof account.totpSecret === 'string' &&
+          ['pending', 'imported'].includes(account.status)
+        ) ||
+        (
+          account.provider === 'google' &&
+          account.status === 'stored' &&
+          typeof account.twoFactor === 'object' &&
+          ['totp-secret', 'https-url'].includes(account.twoFactor?.kind) &&
+          typeof account.twoFactor?.value === 'string' &&
+          account.twoFactor.value.length > 0 &&
+          (
+            account.twoFactor.kind !== 'https-url' ||
+            /^https:\/\/[^\s]+$/i.test(account.twoFactor.value)
+          )
+        )
+      ) ||
       !Number.isInteger(account.attempts) ||
       (account.nextAttemptAt !== undefined && account.nextAttemptAt !== null && !Number.isFinite(account.nextAttemptAt))
     ) throw new LocalImportPoolError('Local import pool is invalid', { code: 'pool_invalid' });
@@ -348,19 +426,19 @@ class LocalImportPoolStore {
     return { added, rejected: parsed.issues.length, total: snapshot.phones.length };
   }
 
-  async importAccounts(source) {
-    const parsed = parseAccountPoolSource(source);
+  async importParsedAccounts(parsed, provider) {
     const snapshot = await this.load();
-    const identities = new Set(snapshot.accounts.map((item) => item.email.toLowerCase()));
+    const identities = new Set(snapshot.accounts.map(accountIdentity));
     let added = 0;
     for (const account of parsed.accounts) {
-      const identity = account.email.toLowerCase();
+      const identity = accountIdentity({ provider, email: account.email });
       if (identities.has(identity)) continue;
       identities.add(identity);
       snapshot.accounts.push({
         id: crypto.randomUUID(),
         ...account,
-        status: 'pending',
+        provider,
+        status: provider === 'openai' ? 'pending' : 'stored',
         attempts: 0,
         lastAttemptAt: null,
         lastOutcome: '',
@@ -369,7 +447,16 @@ class LocalImportPoolStore {
       added += 1;
     }
     await this.save(snapshot);
-    return { added, rejected: parsed.issues.length, total: snapshot.accounts.length };
+    const total = snapshot.accounts.filter((item) => item.provider === provider).length;
+    return { added, rejected: parsed.issues.length, total };
+  }
+
+  async importAccounts(source) {
+    return this.importParsedAccounts(parseAccountPoolSource(source), 'openai');
+  }
+
+  async importGoogleAccounts(source) {
+    return this.importParsedAccounts(parseGoogleAccountPoolSource(source), 'google');
   }
 
   async syncInventoryAccounts({ importLines, sourceVersion, updatedAt } = {}) {
@@ -385,9 +472,10 @@ class LocalImportPoolStore {
       });
     }
     return this.update((snapshot) => {
-      const byEmail = new Map(snapshot.accounts.map((item) => [item.email.toLowerCase(), item]));
+      const openAiAccounts = snapshot.accounts.filter((item) => item.provider === 'openai');
+      const byEmail = new Map(openAiAccounts.map((item) => [item.email.toLowerCase(), item]));
       for (const account of snapshot.accounts) {
-        if (account.inventoryManaged) account.inventoryPresent = false;
+        if (account.provider === 'openai' && account.inventoryManaged) account.inventoryPresent = false;
       }
       let added = 0;
       let updated = 0;
@@ -406,6 +494,7 @@ class LocalImportPoolStore {
         const created = {
           id: crypto.randomUUID(),
           ...account,
+          provider: 'openai',
           status: 'pending',
           attempts: 0,
           lastAttemptAt: null,
@@ -424,7 +513,8 @@ class LocalImportPoolStore {
         updatedAt,
         syncedAt: this.now(),
       };
-      return { added, updated, total: snapshot.accounts.length, sourceVersion };
+      const total = snapshot.accounts.filter((item) => item.provider === 'openai').length;
+      return { added, updated, total, sourceVersion };
     });
   }
 
@@ -476,6 +566,7 @@ class LocalImportPoolStore {
     return this.update((snapshot) => {
       const now = this.now();
       const account = snapshot.accounts.find((item) => (
+        item.provider === 'openai' &&
         item.status === 'pending' &&
         (!item.inventoryManaged || item.inventoryPresent !== false) &&
         (!inventoryOnly || (item.inventoryManaged && item.inventoryPresent === true)) &&
@@ -494,15 +585,29 @@ class LocalImportPoolStore {
     });
   }
 
-  async findAccountByEmail(email) {
+  async findAccountByEmail(email, { provider = 'openai' } = {}) {
     const expected = String(email || '').trim().toLowerCase();
     if (!expected) throw new TypeError('email is required');
+    if (!ACCOUNT_PROVIDERS.has(provider)) throw new TypeError('provider is invalid');
     const snapshot = await this.load();
-    const matches = snapshot.accounts.filter((item) => item.email.trim().toLowerCase() === expected);
+    const matches = snapshot.accounts.filter((item) => (
+      item.provider === provider && item.email.trim().toLowerCase() === expected
+    ));
     if (matches.length > 1) {
       throw new LocalImportPoolError('Local account email is ambiguous', { code: 'account_ambiguous' });
     }
     return matches[0] ? { id: matches[0].id, email: matches[0].email } : null;
+  }
+
+  requireOpenAiAccount(snapshot, accountId) {
+    const account = snapshot.accounts.find((item) => item.id === accountId);
+    if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+    if (account.provider !== 'openai') {
+      throw new LocalImportPoolError('Local account is not in the OpenAI pool', {
+        code: 'account_provider_mismatch',
+      });
+    }
+    return account;
   }
 
   async ensureAccountReplacement(accountId, idempotencyKey) {
@@ -510,8 +615,7 @@ class LocalImportPoolStore {
       throw new TypeError('idempotencyKey must be 16 to 128 supported characters');
     }
     return this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === accountId);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, accountId);
       if (account.accountReplacement) {
         return { email: account.email, replacement: { ...account.accountReplacement } };
       }
@@ -531,8 +635,7 @@ class LocalImportPoolStore {
     if (!BAN_ID_PATTERN.test(String(banId || ''))) throw new TypeError('banId is invalid');
     if (typeof replayed !== 'boolean') throw new TypeError('replayed must be a boolean');
     return this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === accountId);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, accountId);
       if (
         !account.accountReplacement ||
         account.accountReplacement.idempotencyKey !== idempotencyKey
@@ -556,8 +659,7 @@ class LocalImportPoolStore {
 
   async rejectAccountReplacement(accountId, reason = 'replacement_rejected') {
     await this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === accountId);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, accountId);
       if (!account.accountReplacement || account.accountReplacement.status !== 'pending') return;
       account.accountReplacementHistory = Array.isArray(account.accountReplacementHistory)
         ? account.accountReplacementHistory.slice(-19)
@@ -582,15 +684,13 @@ class LocalImportPoolStore {
 
   async getAccountPhoneClaim(accountId) {
     const snapshot = await this.load();
-    const account = snapshot.accounts.find((item) => item.id === accountId);
-    if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+    const account = this.requireOpenAiAccount(snapshot, accountId);
     return account.phoneClaim ? { ...account.phoneClaim } : null;
   }
 
   async ensureAccountPhoneClaim(accountId, idempotencyKey) {
     return this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === accountId);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, accountId);
       if (account.phoneClaim && account.phoneClaim.status !== 'invalid') return { ...account.phoneClaim };
       account.phoneClaim = {
         status: 'pending',
@@ -603,8 +703,7 @@ class LocalImportPoolStore {
 
   async recordAccountPhoneClaim(accountId, { idempotencyKey, phoneId, phoneNumber, claimedAt, replayed }) {
     return this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === accountId);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, accountId);
       if (!account.phoneClaim || account.phoneClaim.idempotencyKey !== idempotencyKey) {
         throw new LocalImportPoolError('Local phone claim state did not match the response', {
           code: 'phone_claim_state_mismatch',
@@ -624,8 +723,7 @@ class LocalImportPoolStore {
 
   async abandonAccountPhoneClaim(accountId, reason = 'claim_rejected') {
     await this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === accountId);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, accountId);
       if (!account.phoneClaim || account.phoneClaim.status !== 'pending') return;
       account.phoneClaimHistory = Array.isArray(account.phoneClaimHistory)
         ? account.phoneClaimHistory.slice(-19)
@@ -642,8 +740,7 @@ class LocalImportPoolStore {
 
   async markAccountPhoneClaimInvalid(accountId, reason = 'sms_unavailable') {
     await this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === accountId);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, accountId);
       if (!account.phoneClaim) return;
       account.phoneClaim.status = 'invalid';
       account.phoneClaim.invalidAt = this.now();
@@ -654,8 +751,7 @@ class LocalImportPoolStore {
 
   async markAccountPhoneClaimUnavailableSynced(accountId) {
     await this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === accountId);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, accountId);
       if (!account.phoneClaim || account.phoneClaim.status !== 'invalid') return;
       account.phoneClaim.remoteUnavailableSynced = true;
       account.phoneClaim.remoteUnavailableSyncedAt = this.now();
@@ -665,7 +761,8 @@ class LocalImportPoolStore {
   async beginNextAttempt() {
     const snapshot = await this.load();
     const now = this.now();
-    const account = snapshot.accounts.find((item) => (
+      const account = snapshot.accounts.find((item) => (
+      item.provider === 'openai' &&
       item.status === 'pending' &&
       (!item.inventoryManaged || item.inventoryPresent !== false) &&
       (!Number.isFinite(item.nextAttemptAt) || item.nextAttemptAt <= now)
@@ -764,8 +861,7 @@ class LocalImportPoolStore {
 
   async markAccountImported(id) {
     await this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === id);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, id);
       account.status = 'imported';
       account.importedAt = this.now();
       account.lastOutcome = 'imported';
@@ -775,8 +871,7 @@ class LocalImportPoolStore {
 
   async markAccountPending(id, outcome = 'failed', { retryAfterMs = 0 } = {}) {
     await this.update((snapshot) => {
-      const account = snapshot.accounts.find((item) => item.id === id);
-      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      const account = this.requireOpenAiAccount(snapshot, id);
       account.status = 'pending';
       account.lastOutcome = String(outcome || 'failed').slice(0, 64);
       account.nextAttemptAt = retryAfterMs > 0 ? this.now() + retryAfterMs : null;
@@ -786,6 +881,8 @@ class LocalImportPoolStore {
   async summary() {
     const snapshot = await this.load();
     const now = this.now();
+    const openAiAccounts = snapshot.accounts.filter((item) => item.provider === 'openai');
+    const googleAccounts = snapshot.accounts.filter((item) => item.provider === 'google');
     return {
       phones: {
         total: snapshot.phones.length,
@@ -802,10 +899,17 @@ class LocalImportPoolStore {
       },
       accounts: {
         total: snapshot.accounts.length,
-        pending: snapshot.accounts.filter((item) => (
+        openai: {
+          total: openAiAccounts.length,
+          pending: openAiAccounts.filter((item) => (
           item.status === 'pending' && (!item.inventoryManaged || item.inventoryPresent !== false)
-        )).length,
-        imported: snapshot.accounts.filter((item) => item.status === 'imported').length,
+          )).length,
+          imported: openAiAccounts.filter((item) => item.status === 'imported').length,
+        },
+        google: {
+          total: googleAccounts.length,
+          stored: googleAccounts.filter((item) => item.status === 'stored').length,
+        },
       },
     };
   }
@@ -818,8 +922,10 @@ module.exports = {
   LocalImportPoolStore,
   PHONE_COOLDOWN_MS,
   POOL_VERSION,
+  accountIdentity,
   emptySnapshot,
   parseAccountPoolSource,
+  parseGoogleAccountPoolSource,
   parsePhonePoolSource,
   protectData,
   restrictedPowerShellEnv,

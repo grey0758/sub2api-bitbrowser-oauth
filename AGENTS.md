@@ -132,6 +132,12 @@ profile and the Sub2API OpenAI OAuth account-import flow.
   current-user Windows DPAPI in the Git-ignored `.runtime` directory. Plaintext
   pool files, CLI row output, and child-process administrator credential
   inheritance are prohibited.
+- Account-pool rows have an explicit provider. Legacy rows migrate to `openai`;
+  `google` rows are stored-only and must never enter OpenAI OAuth selection,
+  Workstation inventory synchronization, Sub2API health matching,
+  reauthorization, phone claims, or banned-account replacement. Private
+  conversation recovery must stream credentials directly into the DPAPI
+  importer without writing or logging plaintext transcripts or account rows.
 - A phone cooldown starts on actual OpenAI submission and lasts 45 minutes.
   Pool-imported phone entries default to no resend, even though direct
   `import-account` retains the explicit one-resend workflow.
@@ -195,6 +201,8 @@ npm run inventory-import-next        # remote account/phone allocation workflow
 npm run account-health-audit          # encrypted redacted account status list
 npm run reauthorize-errors            # guarded sequential error-account retry
 npm run pool-status                   # status-only encrypted pool summary
+npm run pool-import-google-accounts   # stdin Google rows -> stored-only DPAPI pool
+npm run pool-google-status            # Google count only; never prints rows
 ```
 
 Use a runtime environment or a secret manager injector for the administrator

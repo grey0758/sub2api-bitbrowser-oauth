@@ -115,8 +115,10 @@ Windows DPAPI-encrypted pool:
 
 ```bash
 npm run pool-import-phones < phones.txt
-npm run pool-import-accounts < accounts.txt
+npm run pool-import-accounts < openai-accounts.txt
+npm run pool-import-google-accounts < google-accounts.txt
 npm run pool-status
+npm run pool-google-status
 npm run pool-reset-phone-cooldowns
 npm run pool-correct-invalid-phone
 npm run pool-enable-resend
@@ -125,6 +127,18 @@ npm run import-next
 
 The encrypted file is `.runtime/import-pool.dpapi`, which is Git-ignored and
 bound to the current Windows user by DPAPI. The CLI never prints pool rows.
+Account rows are tagged with an explicit provider. Existing version 1 rows are
+migrated to `openai`; Google rows use `google` and remain stored credentials
+only. The same email may exist once in each provider pool, while duplicates
+inside one provider are ignored.
+
+`pool-import-google-accounts` accepts stdin-only
+`email|password|2FA` rows. `2FA` may be a validated Base32 TOTP secret or an
+HTTPS code-access URL; the encrypted row records which kind it is. It does not
+open a browser, start OAuth, sync Workstation inventory, or make the row
+eligible for Sub2API import. `pool-google-status` prints counts only.
+Private-history recovery must stream extracted rows directly to this command;
+never save a transcript or plaintext credential export in the repository.
 Phone entries use a 45-minute cooldown starting only when the number is
 actually submitted to OpenAI. `import-next` selects the first pending account
 and first available phone, records a successful Sub2API import, and leaves a
