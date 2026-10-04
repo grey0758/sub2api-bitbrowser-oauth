@@ -6,6 +6,10 @@ const { Sub2ApiAdminClient, Sub2ApiError } = require('../src/sub2api/admin-clien
 const { buildAccountHealthAudit } = require('../src/sub2api/account-health');
 const { OAuthFlow } = require('../src/oauth/flow');
 const {
+  GoogleGeminiOAuthImportFlow,
+  GoogleLoginError,
+} = require('../src/oauth/google-gemini-import');
+const {
   OpenAiAccountImportFlow,
   OpenAiImportConfigError,
   OpenAiLoginError,
@@ -41,6 +45,9 @@ function parseArgs(argv) {
     else if (item === '--timeout-ms') args.timeoutMs = Number(argv[++i]);
     else if (item === '--limit') args.limit = Number(argv[++i]);
     else if (item === '--email') args.email = String(argv[++i] || '').trim();
+    else if (item === '--oauth-type') args.oauthType = String(argv[++i] || '').trim();
+    else if (item === '--project-id') args.projectId = String(argv[++i] || '').trim();
+    else if (item === '--tier-id') args.tierId = String(argv[++i] || '').trim();
     else if (item === '--retry-failed') args.retryFailed = true;
     else if (item === '--retry-banned') args.retryBanned = true;
     else if (item === '--replace-banned') args.replaceBanned = true;
@@ -72,6 +79,7 @@ function usage() {
     '  node bin/sub2api-bitbrowser-oauth.js pool-import-google-accounts < google-accounts.txt',
     '  node bin/sub2api-bitbrowser-oauth.js pool-status',
     '  node bin/sub2api-bitbrowser-oauth.js pool-google-status',
+    '  node bin/sub2api-bitbrowser-oauth.js google-oauth-import-next [--oauth-type google_one|code_assist|ai_studio] [--project-id ID] [--tier-id ID] [--proxy-id ID] [--timeout-ms N]',
     '  node bin/sub2api-bitbrowser-oauth.js pool-reset-phone-cooldowns',
     '  node bin/sub2api-bitbrowser-oauth.js pool-correct-invalid-phone',
     '  node bin/sub2api-bitbrowser-oauth.js pool-enable-resend',
@@ -93,6 +101,8 @@ function usage() {
     'OPENAI_PHONE and SMS_ACCESS_URL are required only if OpenAI asks for phone',
     'verification. Account runtime values are never read from repository files.',
     'Pool commands keep their payload in a DPAPI-encrypted, Git-ignored local file.',
+    'google-oauth-import-next selects one stored Google row from its separate',
+    'DPAPI pool and imports a verified Gemini OAuth account into Sub2API.',
     'Inventory commands additionally require WORKSTATION_AUTOMATION_TOKEN.',
   ].join('\n');
 }
@@ -100,6 +110,14 @@ function usage() {
 function safeError(error) {
   if (error instanceof OpenAiImportConfigError) return error.message;
   if (error instanceof LocalImportPoolError) return error.message;
+  if (error instanceof GoogleLoginError) {
+    if (error.code === 'invalid_credentials') return 'Google rejected the selected account credentials';
+    if (error.code === 'rate_limited') return 'Google login is temporarily rate limited';
+    if (error.code === 'manual_challenge') return 'Google requested a verification challenge that requires owner review';
+    if (error.code === 'two_factor_unavailable') return 'Google two-factor code was unavailable';
+    if (error.code === 'browser_rejected') return 'Google refused this BitBrowser login';
+    return 'Google OAuth login did not complete';
+  }
   if (error instanceof WorkstationAutomationError) {
     if (error.status === 401) return 'Workstation automation authentication failed';
     if (error.status) {
@@ -162,7 +180,7 @@ async function main(argv = process.argv.slice(2)) {
       const summary = await new LocalImportPoolStore({ file: DEFAULT_GOOGLE_POOL_FILE }).summary();
       console.log(
         `Local Google pool status: total=${summary.accounts.google.total}; ` +
-        `stored=${summary.accounts.google.stored}.`
+        `stored=${summary.accounts.google.stored}; imported=${summary.accounts.google.imported}.`
       );
       return;
     }
@@ -173,7 +191,7 @@ async function main(argv = process.argv.slice(2)) {
       `cooldown=${summary.phones.cooldown}, invalid=${summary.phones.invalid}; ` +
       `OpenAI accounts total=${summary.accounts.openai.total}, pending=${summary.accounts.openai.pending}, ` +
       `imported=${summary.accounts.openai.imported}; Google accounts total=${googleSummary.accounts.google.total}, ` +
-      `stored=${googleSummary.accounts.google.stored}; ` +
+      `stored=${googleSummary.accounts.google.stored}, imported=${googleSummary.accounts.google.imported}; ` +
       `all accounts total=${summary.accounts.openai.total + googleSummary.accounts.google.total}.`
     );
     return;
@@ -232,6 +250,38 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
   loadRuntimeEnv();
+  if (args.command === 'google-oauth-import-next') {
+    const pool = new LocalImportPoolStore({ file: DEFAULT_GOOGLE_POOL_FILE });
+    const selected = await pool.beginNextGoogleAttempt();
+    const importer = new GoogleGeminiOAuthImportFlow({
+      sub2api: new Sub2ApiAdminClient(),
+      browser,
+      account: selected,
+    });
+    try {
+      const completed = await importer.run({
+        proxyId: args.proxyId,
+        projectId: args.projectId,
+        oauthType: args.oauthType || 'google_one',
+        tierId: args.tierId,
+        incognito: true,
+        timeoutMs: args.timeoutMs || 10 * 60_000,
+      });
+      await pool.markGoogleImported(selected.id);
+      console.log(`Google OAuth account ${completed.action} and verified in the Sub2API Gemini pool.`);
+    } catch (error) {
+      const outcome = error instanceof GoogleLoginError
+        ? error.code
+        : error instanceof Sub2ApiError
+          ? 'sub2api_error'
+          : 'failed';
+      await pool.markGoogleStored(selected.id, outcome, {
+        retryAfterMs: error instanceof GoogleLoginError && error.code === 'rate_limited' ? 15 * 60_000 : 0,
+      }).catch(() => {});
+      throw error;
+    }
+    return;
+  }
   if (args.command === 'account-health-audit') {
     const sub2api = new Sub2ApiAdminClient();
     const pool = new LocalImportPoolStore();

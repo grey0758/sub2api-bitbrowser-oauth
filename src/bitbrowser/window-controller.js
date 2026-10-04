@@ -77,7 +77,7 @@ class FixedWindowSession {
     return this.context.pages();
   }
 
-  async waitForCallback({ timeoutMs = 10 * 60_000, pollMs = 500 } = {}) {
+  async waitForCallback({ timeoutMs = 10 * 60_000, pollMs = 500, allowCodeAssist = false } = {}) {
     const deadline = Date.now() + timeoutMs;
     let settled = false;
     let resolveCallback;
@@ -90,7 +90,7 @@ class FixedWindowSession {
     const observePage = (page) => {
       if (listeners.has(page)) return;
       const onRequest = (request) => {
-        const parsed = parseCallbackUrl(request.url());
+        const parsed = parseCallbackUrl(request.url(), { allowCodeAssist });
         if (parsed && !settled) {
           settled = true;
           resolveCallback({ ...parsed, page });
@@ -98,7 +98,7 @@ class FixedWindowSession {
       };
       const onFrameNavigated = (frame) => {
         if (frame !== page.mainFrame()) return;
-        const parsed = parseCallbackUrl(frame.url());
+        const parsed = parseCallbackUrl(frame.url(), { allowCodeAssist });
         if (parsed && !settled) {
           settled = true;
           resolveCallback({ ...parsed, page });
@@ -124,7 +124,7 @@ class FixedWindowSession {
       while (!settled && Date.now() < deadline) {
         for (const page of this.context.pages()) {
           observePage(page);
-          const parsed = parseCallbackUrl(page.url());
+          const parsed = parseCallbackUrl(page.url(), { allowCodeAssist });
           if (parsed && !settled) {
             settled = true;
             resolveCallback({ ...parsed, page });
@@ -148,12 +148,17 @@ class FixedWindowSession {
   }
 }
 
-function parseCallbackUrl(value) {
+function parseCallbackUrl(value, { allowCodeAssist = false } = {}) {
   if (!value || !/^https?:\/\//i.test(value)) return null;
   let parsed;
   try { parsed = new URL(value); } catch { return null; }
-  if (!/^localhost$|^127\.0\.0\.1$/.test(parsed.hostname)) return null;
-  if (!/^\/auth\/callback\/?$/.test(parsed.pathname)) return null;
+  const localCallback = /^localhost$|^127\.0\.0\.1$/.test(parsed.hostname) &&
+    /^\/auth\/callback\/?$/.test(parsed.pathname);
+  const codeAssistCallback = allowCodeAssist &&
+    parsed.protocol === 'https:' &&
+    parsed.hostname === 'codeassist.google.com' &&
+    /^\/authcode\/?$/.test(parsed.pathname);
+  if (!localCallback && !codeAssistCallback) return null;
   const code = parsed.searchParams.get('code');
   if (!code) return null;
   return { code, state: parsed.searchParams.get('state') || '' };

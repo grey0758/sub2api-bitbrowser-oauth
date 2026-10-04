@@ -12,7 +12,9 @@ const { FixedWindowController, FixedWindowSession, exactWindowMatches, parseCall
 const {
   Sub2ApiAdminClient,
   Sub2ApiError,
+  buildGeminiCredentials,
   buildOpenAiCredentials,
+  normalizeGeminiOAuthType,
   parseCodeInput,
 } = require('../src/sub2api/admin-client');
 const { OAuthFlow } = require('../src/oauth/flow');
@@ -37,6 +39,10 @@ const {
   waitForSmsCodeWithResend,
   windowsSmsRequest,
 } = require('../src/oauth/account-import');
+const {
+  GoogleLoginError,
+  readGoogleTwoFactor,
+} = require('../src/oauth/google-gemini-import');
 const { loadRuntimeEnv, parseRuntimeEnv } = require('../src/runtime-env');
 const {
   WorkstationAutomationClient,
@@ -412,7 +418,98 @@ test('callback parser accepts localhost callback and rejects unrelated URLs', ()
   const callback = parseCallbackUrl('http://localhost:1455/auth/callback?code=one-time&state=s');
   assert.deepEqual({ code: callback.code, state: callback.state }, { code: 'one-time', state: 's' });
   assert.equal(parseCallbackUrl('https://auth.openai.com/oauth/authorize?code=x'), null);
+  assert.deepEqual(
+    parseCallbackUrl('https://codeassist.google.com/authcode?code=gemini-code&state=gemini-state', {
+      allowCodeAssist: true,
+    }),
+    { code: 'gemini-code', state: 'gemini-state' }
+  );
+  assert.equal(parseCallbackUrl('https://codeassist.google.com/authcode?code=x'), null);
   assert.equal(parseCallbackUrl('http://localhost:1455/other?code=x'), null);
+});
+
+test('Sub2API Gemini OAuth uses the supported endpoints and verifies account creation', async () => {
+  const calls = [];
+  let created = false;
+  const fetchImpl = async (url, options) => {
+    const parsed = new URL(url);
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push([options.method, parsed.pathname, body]);
+    if (parsed.pathname.endsWith('/admin/gemini/oauth/auth-url')) {
+      return new Response(JSON.stringify({ code: 0, data: {
+        auth_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-state',
+        session_id: 'gemini-session',
+        state: 'gemini-state',
+      } }), { status: 200 });
+    }
+    if (parsed.pathname.endsWith('/admin/gemini/oauth/exchange-code')) {
+      return new Response(JSON.stringify({ code: 0, data: {
+        access_token: 'access-token',
+        refresh_token: 'refresh-token',
+        expires_at: 1_700_000_000,
+        oauth_type: 'google_one',
+      } }), { status: 200 });
+    }
+    if (parsed.pathname.endsWith('/admin/accounts') && options.method === 'GET') {
+      const accounts = created ? [{ id: 11, name: 'google@example.com', platform: 'gemini', type: 'oauth' }] : [];
+      return new Response(JSON.stringify({ code: 0, data: { items: accounts, total: accounts.length } }), { status: 200 });
+    }
+    if (parsed.pathname.endsWith('/admin/accounts') && options.method === 'POST') {
+      created = true;
+      return new Response(JSON.stringify({ code: 0, data: { id: 11 } }), { status: 200 });
+    }
+    throw new Error(`unexpected request: ${options.method} ${parsed.pathname}`);
+  };
+  const client = new Sub2ApiAdminClient({ apiKey: 'runtime-only', fetchImpl });
+  const authorization = await client.generateGeminiAuthUrl({ oauthType: 'google_one' });
+  assert.equal(authorization.oauthType, 'google_one');
+  const exchanged = await client.exchangeGeminiCode({
+    sessionId: authorization.sessionId,
+    code: 'callback-code',
+    state: authorization.state,
+    oauthType: authorization.oauthType,
+  });
+  assert.deepEqual(await client.importGeminiOAuthAccount({
+    email: 'google@example.com',
+    exchangeResult: exchanged,
+  }), { action: 'created', accountId: 11 });
+  assert.equal(calls.find((item) => item[1].endsWith('/oauth/auth-url'))[2].oauth_type, 'google_one');
+  assert.equal(calls.find((item) => item[1].endsWith('/oauth/exchange-code'))[2].state, 'gemini-state');
+  const createBody = calls.find((item) => item[0] === 'POST' && item[1].endsWith('/admin/accounts'))[2];
+  assert.equal(createBody.platform, 'gemini');
+  assert.equal(createBody.type, 'oauth');
+  assert.equal(createBody.credentials.expires_at, '1700000000');
+});
+
+test('Gemini credential validation and Google HTTPS two-factor retrieval are bounded', async () => {
+  assert.equal(normalizeGeminiOAuthType(), 'google_one');
+  assert.throws(() => normalizeGeminiOAuthType('invalid'), /oauthType/);
+  assert.deepEqual(buildGeminiCredentials({
+    access_token: 'access-token',
+    expires_at: 1_700_000_000,
+    oauth_type: 'google_one',
+  }), {
+    access_token: 'access-token',
+    expires_at: '1700000000',
+    oauth_type: 'google_one',
+  });
+  let attempts = 0;
+  const page = { async waitForTimeout() {} };
+  assert.equal(await readGoogleTwoFactor({
+    kind: 'https-url',
+    value: 'https://two-factor.example.invalid/access?id=runtime-only',
+  }, page, {
+    requestText: async () => {
+      attempts += 1;
+      return attempts === 2 ? 'verification code: 123456' : '';
+    },
+    attempts: 2,
+    intervalMs: 0,
+  }), '123456');
+  await assert.rejects(
+    () => readGoogleTwoFactor({ kind: 'unsupported', value: 'runtime-only' }, page),
+    (error) => error instanceof GoogleLoginError && error.code === 'two_factor_unavailable'
+  );
 });
 
 test('callback waiter captures the localhost request before Chrome replaces the URL', async () => {
@@ -1160,7 +1257,7 @@ test('local pool encrypts its file and enforces the 45-minute phone cooldown', a
     assert.deepEqual((await store.summary()).accounts, {
       total: 1,
       openai: { total: 1, pending: 0, imported: 1 },
-      google: { total: 0, stored: 0 },
+      google: { total: 0, stored: 0, imported: 0 },
     });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -1223,11 +1320,16 @@ test('local pool isolates Google credentials from OpenAI selection and permits c
       () => store.markAccountPending(google.id),
       (error) => error.code === 'account_provider_mismatch'
     );
+    const googleSelected = await store.beginNextGoogleAttempt();
+    assert.equal(googleSelected.id, google.id);
+    assert.equal(googleSelected.twoFactor.kind, 'https-url');
+    await store.markGoogleImported(google.id);
     assert.deepEqual((await store.summary()).accounts, {
       total: 2,
       openai: { total: 1, pending: 1, imported: 0 },
-      google: { total: 1, stored: 1 },
+      google: { total: 1, stored: 0, imported: 1 },
     });
+    await assert.rejects(() => store.beginNextGoogleAttempt(), /No stored Google account/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

@@ -280,7 +280,7 @@ function normalizeSnapshot(value) {
         ) ||
         (
           account.provider === 'google' &&
-          account.status === 'stored' &&
+          ['stored', 'imported'].includes(account.status) &&
           typeof account.twoFactor === 'object' &&
           ['totp-secret', 'https-url'].includes(account.twoFactor?.kind) &&
           typeof account.twoFactor?.value === 'string' &&
@@ -464,6 +464,63 @@ class LocalImportPoolStore {
 
   async importGoogleAccounts(source) {
     return this.importParsedAccounts(parseGoogleAccountPoolSource(source), 'google');
+  }
+
+  async beginNextGoogleAttempt() {
+    return this.update((snapshot) => {
+      const now = this.now();
+      const account = snapshot.accounts.find((item) => (
+        item.provider === 'google' &&
+        item.status === 'stored' &&
+        (!Number.isFinite(item.nextAttemptAt) || item.nextAttemptAt <= now)
+      ));
+      if (!account) {
+        throw new LocalImportPoolError('No stored Google account is available', {
+          code: 'no_google_account',
+        });
+      }
+      account.attempts += 1;
+      account.lastAttemptAt = now;
+      account.lastOutcome = 'in_progress';
+      account.nextAttemptAt = null;
+      return {
+        id: account.id,
+        email: account.email,
+        password: account.password,
+        twoFactor: { ...account.twoFactor },
+      };
+    });
+  }
+
+  async markGoogleImported(id) {
+    await this.update((snapshot) => {
+      const account = snapshot.accounts.find((item) => item.id === id);
+      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      if (account.provider !== 'google') {
+        throw new LocalImportPoolError('Local account is not in the Google pool', {
+          code: 'account_provider_mismatch',
+        });
+      }
+      account.status = 'imported';
+      account.importedAt = this.now();
+      account.lastOutcome = 'imported';
+      account.nextAttemptAt = null;
+    });
+  }
+
+  async markGoogleStored(id, outcome = 'failed', { retryAfterMs = 0 } = {}) {
+    await this.update((snapshot) => {
+      const account = snapshot.accounts.find((item) => item.id === id);
+      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      if (account.provider !== 'google') {
+        throw new LocalImportPoolError('Local account is not in the Google pool', {
+          code: 'account_provider_mismatch',
+        });
+      }
+      account.status = 'stored';
+      account.lastOutcome = String(outcome || 'failed').slice(0, 64);
+      account.nextAttemptAt = retryAfterMs > 0 ? this.now() + retryAfterMs : null;
+    });
   }
 
   async syncInventoryAccounts({ importLines, sourceVersion, updatedAt } = {}) {
@@ -916,6 +973,7 @@ class LocalImportPoolStore {
         google: {
           total: googleAccounts.length,
           stored: googleAccounts.filter((item) => item.status === 'stored').length,
+          imported: googleAccounts.filter((item) => item.status === 'imported').length,
         },
       },
     };

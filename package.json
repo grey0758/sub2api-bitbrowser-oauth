@@ -2,7 +2,7 @@
   "name": "sub2api-bitbrowser-oauth",
   "version": "0.1.0",
   "private": true,
-  "description": "Fixed BitBrowser us001_codex controller for Sub2API OpenAI OAuth account import",
+  "description": "Fixed BitBrowser us001_codex controller for Sub2API OpenAI and Gemini OAuth account import",
   "main": "src/index.js",
   "bin": {
     "sub2api-bitbrowser-oauth": "bin/sub2api-bitbrowser-oauth.js"
@@ -25,12 +25,13 @@
     "pool-import-accounts": "node bin/sub2api-bitbrowser-oauth.js pool-import-accounts",
     "pool-import-google-accounts": "node bin/sub2api-bitbrowser-oauth.js pool-import-google-accounts",
     "pool-google-status": "node bin/sub2api-bitbrowser-oauth.js pool-google-status",
+    "google-oauth-import-next": "node bin/sub2api-bitbrowser-oauth.js google-oauth-import-next",
     "pool-reset-phone-cooldowns": "node bin/sub2api-bitbrowser-oauth.js pool-reset-phone-cooldowns",
     "pool-correct-invalid-phone": "node bin/sub2api-bitbrowser-oauth.js pool-correct-invalid-phone",
     "pool-enable-resend": "node bin/sub2api-bitbrowser-oauth.js pool-enable-resend",
     "test": "node --test test/unit.test.js",
     "test:dependencies": "node test/real-dependency-check.js",
-    "syntax": "node --check bin/sub2api-bitbrowser-oauth.js && node --check src/bitbrowser/client.js && node --check src/bitbrowser/window-controller.js && node --check src/sub2api/admin-client.js && node --check src/sub2api/account-health.js && node --check src/oauth/flow.js && node --check src/oauth/account-import.js && node --check src/pool/local-import-pool.js && node --check src/workstation/automation-client.js && node --check src/workstation/inventory-import.js && node --check src/runtime-env.js && node --check test/real-dependency-check.js"
+    "syntax": "node --check bin/sub2api-bitbrowser-oauth.js && node --check src/bitbrowser/client.js && node --check src/bitbrowser/window-controller.js && node --check src/sub2api/admin-client.js && node --check src/sub2api/account-health.js && node --check src/oauth/flow.js && node --check src/oauth/account-import.js && node --check src/oauth/google-gemini-import.js && node --check src/pool/local-import-pool.js && node --check src/workstation/automation-client.js && node --check src/workstation/inventory-import.js && node --check src/runtime-env.js && node --check test/real-dependency-check.js"
   },
   "engines": { "node": ">=18.17" },
   "dependencies": {

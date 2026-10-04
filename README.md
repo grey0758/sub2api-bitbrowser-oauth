@@ -1,7 +1,7 @@
 # Sub2API BitBrowser OAuth
 
-This small Node.js service opens the Sub2API OpenAI OAuth authorization flow in
-the already-created BitBrowser window `us001_codex`.
+This small Node.js service opens supported Sub2API OpenAI and Gemini OAuth
+authorization flows in the already-created BitBrowser window `us001_codex`.
 
 It uses the same BitBrowser API/CDP approach as `plus_paypal`, but intentionally
 does not use its random-window/cleanup mode. The exact-name controller is the
@@ -28,7 +28,7 @@ The production `SUB2API_ADMIN_API_KEY` is canonical in OpenBao at
 `admin_api_key`). On `ydy001` it is materialized only as the ACL-restricted
 `.runtime/admin.env` file, which is ignored by Git. Do not copy that value into
 `.env.example`, source files, docs, or command output. The CLI automatically
-loads this allowlisted runtime file for `start`, `run`, and `import-account`;
+loads this allowlisted runtime file for OAuth and account-management commands;
 an already-defined process environment variable takes precedence.
 
 ## Usage
@@ -108,6 +108,30 @@ looks up an existing exact email, and then uses `POST /admin/accounts` or
 `POST /admin/accounts/:id/apply-oauth-credentials` as appropriate. It reports
 success only after a fresh `GET /admin/accounts` confirms the exact email.
 
+### Google account to Gemini OAuth import
+
+Google credentials remain in their separate encrypted pool. To authorize the
+next stored Google row and import it into the existing Sub2API Gemini account
+pool, run:
+
+```bash
+npm run google-oauth-import-next -- --oauth-type google_one --timeout-ms 600000
+```
+
+The command always uses a fresh isolated context inside the exact
+`us001_codex` profile. It submits the selected Google login, accepts only the
+supported Authenticator-code challenge, handles the bounded Google consent
+flow, validates callback state, exchanges the code through Sub2API, and then
+creates or updates the exact `platform=gemini` account. It reports success only
+after a fresh account-list read finds that exact account name. The profile is
+left open.
+
+The default and normal consumer-account mode is `google_one`. `code_assist`
+requires an explicit `--project-id`; `ai_studio` requires the server's custom
+OAuth client capability. Optional `--proxy-id` and `--tier-id` are passed only
+to the supported Sub2API endpoints. Unexpected Google challenges stop for
+owner review instead of weakening verification.
+
 ## Encrypted local import pool
 
 Pending accounts and phone/SMS pairs can be fed through stdin into a local
@@ -119,6 +143,7 @@ npm run pool-import-accounts < openai-accounts.txt
 npm run pool-import-google-accounts < google-accounts.txt
 npm run pool-status
 npm run pool-google-status
+npm run google-oauth-import-next -- --oauth-type google_one --timeout-ms 600000
 npm run pool-reset-phone-cooldowns
 npm run pool-correct-invalid-phone
 npm run pool-enable-resend
@@ -130,15 +155,17 @@ Google pool is `.runtime/google-account-pool.dpapi`. Both are Git-ignored and
 bound to the Windows user that created each file through DPAPI. The CLI never
 prints pool rows or merges one file into the other.
 Account rows are tagged with an explicit provider. Existing version 1 rows are
-migrated to `openai`; Google rows use `google` and remain stored credentials
-only. The same email may exist once in each provider pool, while duplicates
-inside one provider are ignored.
+migrated to `openai`; Google rows use `google` and have an independent
+`stored`/`imported` lifecycle. The same email may exist once in each provider
+pool, while duplicates inside one provider are ignored.
 
 `pool-import-google-accounts` accepts stdin-only
 `email|password|2FA` rows. `2FA` may be a validated Base32 TOTP secret or an
-HTTPS code-access URL; the encrypted row records which kind it is. It does not
-open a browser, start OAuth, sync Workstation inventory, or make the row
-eligible for Sub2API import. `pool-google-status` prints counts only.
+HTTPS code-access URL; the encrypted row records which kind it is. The import
+command selects only a `stored` row, and changes it to `imported` only after
+the exact Gemini account-list postcondition passes. A failed attempt returns
+the row to `stored`; a Google rate-limit result adds a 15-minute retry delay.
+`pool-google-status` prints counts only.
 Private-history recovery must stream extracted rows directly to this command;
 never save a transcript or plaintext credential export in the repository.
 Phone entries use a 45-minute cooldown starting only when the number is

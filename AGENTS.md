@@ -12,6 +12,9 @@ profile and the Sub2API OpenAI OAuth account-import flow.
 - Account import: import one explicitly supplied or queued account through the
   complete BitBrowser login, OAuth callback exchange, Sub2API create/update,
   and exact-email verification workflow.
+- Google Gemini import: select one `stored` row only from the separate Google
+  DPAPI pool, authorize it with the supported Sub2API Gemini OAuth endpoints,
+  and mark it `imported` only after an exact Gemini account-list postcondition.
 - Login-only probing: determine whether supplied credentials reach consent or
   phone verification without exchanging OAuth, claiming a phone, importing, or
   persisting the supplied rows.
@@ -91,6 +94,26 @@ profile and the Sub2API OpenAI OAuth account-import flow.
 4. A probe must stop before consent or phone verification and must not exchange
    a callback, mutate Sub2API, allocate a phone, or persist its input.
 
+### Google Gemini OAuth import
+
+1. Keep `.runtime/google-account-pool.dpapi` physically separate from the
+   OpenAI pool and select only a `provider=google,status=stored` row.
+2. Default ordinary consumer accounts to `google_one`. Require an explicit
+   project ID for `code_assist`; use `ai_studio` only when the server reports
+   its custom OAuth client capability.
+3. Use a fresh isolated context inside exact `us001_codex`. Support only an
+   explicit Google Authenticator challenge with the row's validated TOTP
+   secret or HTTPS code-access URL; stop on every other verification route.
+4. Accept only the allowlisted Google authorization and callback hosts,
+   validate the exact returned state, and exchange through
+   `/admin/gemini/oauth/exchange-code`.
+5. Create or update only the exact `platform=gemini` account name through the
+   supported account endpoints. Mark the encrypted row `imported` only after a
+   fresh account list proves the exact name exists. Return failures to
+   `stored`; defer a rate-limited row for 15 minutes.
+6. Never print the Google row, OAuth URL, callback code/state, token response,
+   cookies, password, or two-factor value. Leave the browser profile open.
+
 ### Controlled deletion
 
 1. Obtain the exact email targets from the operator's explicit request; do not
@@ -115,8 +138,8 @@ profile and the Sub2API OpenAI OAuth account-import flow.
 - Releasing a session disconnects Playwright only; the named BitBrowser window
   remains open unless an operator explicitly passes `--close-window`.
 - OAuth authorization is called through the supported administrator endpoints:
-  `POST /admin/openai/generate-auth-url` and
-  `POST /admin/openai/exchange-code`.
+  the OpenAI generate/exchange pair or the Gemini
+  `/admin/gemini/oauth/auth-url` and `/admin/gemini/oauth/exchange-code` pair.
 - A complete `import-account` follows the deployed administrator UI contract:
   it reads `GET /admin/accounts`, then calls `POST /admin/accounts` for a new
   exact email or `POST /admin/accounts/:id/apply-oauth-credentials` for an
@@ -134,8 +157,8 @@ profile and the Sub2API OpenAI OAuth account-import flow.
   inheritance are prohibited.
 - Account-pool rows have an explicit provider. Legacy rows migrate to `openai`;
   `google` rows live in the separate Git-ignored, current-user DPAPI file
-  `.runtime/google-account-pool.dpapi`, are stored-only, and must never enter
-  OpenAI OAuth selection,
+  `.runtime/google-account-pool.dpapi`, have an independent `stored`/`imported`
+  lifecycle, and must never enter OpenAI OAuth selection,
   Workstation inventory synchronization, Sub2API health matching,
   reauthorization, phone claims, or banned-account replacement. Private
   conversation recovery must stream credentials directly into the DPAPI
@@ -205,6 +228,7 @@ npm run reauthorize-errors            # guarded sequential error-account retry
 npm run pool-status                   # status-only encrypted pool summary
 npm run pool-import-google-accounts   # stdin Google rows -> stored-only DPAPI pool
 npm run pool-google-status            # Google count only; never prints rows
+npm run google-oauth-import-next      # one Google row -> verified Gemini account
 ```
 
 Use a runtime environment or a secret manager injector for the administrator

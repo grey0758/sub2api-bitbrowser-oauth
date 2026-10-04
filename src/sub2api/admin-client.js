@@ -78,6 +78,36 @@ function buildOpenAiExtraInfo(value) {
   return Object.keys(extra).length > 0 ? extra : undefined;
 }
 
+const GEMINI_OAUTH_TYPES = new Set(['code_assist', 'google_one', 'ai_studio']);
+
+function normalizeGeminiOAuthType(value) {
+  const oauthType = String(value || 'google_one').trim();
+  if (!GEMINI_OAUTH_TYPES.has(oauthType)) {
+    throw new TypeError('Gemini oauthType must be code_assist, google_one, or ai_studio');
+  }
+  return oauthType;
+}
+
+function buildGeminiCredentials(value) {
+  if (!value || typeof value !== 'object') {
+    throw new Sub2ApiError('Sub2API returned no Gemini credential material');
+  }
+  if (typeof value.access_token !== 'string' || !value.access_token.trim()) {
+    throw new Sub2ApiError('Sub2API returned incomplete Gemini credential material');
+  }
+  const expiresAt = typeof value.expires_at === 'number' && Number.isFinite(value.expires_at)
+    ? Math.floor(value.expires_at).toString()
+    : typeof value.expires_at === 'string' && value.expires_at.trim()
+      ? value.expires_at.trim()
+      : '';
+  if (!expiresAt) throw new Sub2ApiError('Sub2API returned incomplete Gemini credential material');
+  const credentials = { access_token: value.access_token, expires_at: expiresAt };
+  for (const field of ['refresh_token', 'token_type', 'scope', 'project_id', 'oauth_type', 'tier_id']) {
+    if (value[field]) credentials[field] = value[field];
+  }
+  return credentials;
+}
+
 function normalizeAccountPage(value) {
   if (Array.isArray(value)) return { accounts: value, total: value.length };
   if (!value || typeof value !== 'object') {
@@ -196,6 +226,51 @@ class Sub2ApiAdminClient {
     return this.post('/admin/openai/exchange-code', body);
   }
 
+  async getGeminiOAuthCapabilities() {
+    return this.get('/admin/gemini/oauth/capabilities');
+  }
+
+  async generateGeminiAuthUrl({ proxyId, projectId, oauthType = 'google_one', tierId } = {}) {
+    const normalizedType = normalizeGeminiOAuthType(oauthType);
+    if (normalizedType === 'code_assist' && !String(projectId || '').trim()) {
+      throw new TypeError('Gemini code_assist OAuth requires projectId');
+    }
+    const body = { oauth_type: normalizedType };
+    if (proxyId != null && proxyId !== '') body.proxy_id = proxyId;
+    if (String(projectId || '').trim()) body.project_id = String(projectId).trim();
+    if (String(tierId || '').trim()) body.tier_id = String(tierId).trim();
+    const result = await this.post('/admin/gemini/oauth/auth-url', body);
+    const authUrl = result?.auth_url;
+    const sessionId = result?.session_id;
+    const state = result?.state;
+    let parsed;
+    try { parsed = new URL(authUrl); } catch { /* validated below */ }
+    if (
+      !parsed ||
+      parsed.protocol !== 'https:' ||
+      !['accounts.google.com', 'consent.google.com'].includes(parsed.hostname)
+    ) {
+      throw new Sub2ApiError('Sub2API returned an unexpected Gemini authorization URL', { data: result });
+    }
+    if (typeof sessionId !== 'string' || !sessionId || typeof state !== 'string' || !state) {
+      throw new Sub2ApiError('Sub2API returned an incomplete Gemini OAuth session', { data: result });
+    }
+    return { authUrl, sessionId, state, oauthType: normalizedType };
+  }
+
+  async exchangeGeminiCode({ sessionId, code, state, proxyId, oauthType = 'google_one', tierId } = {}) {
+    if (!sessionId || !code || !state) throw new Error('sessionId, code, and state are required for Gemini OAuth exchange');
+    const body = {
+      session_id: sessionId,
+      code,
+      state,
+      oauth_type: normalizeGeminiOAuthType(oauthType),
+    };
+    if (proxyId != null && proxyId !== '') body.proxy_id = proxyId;
+    if (String(tierId || '').trim()) body.tier_id = String(tierId).trim();
+    return this.post('/admin/gemini/oauth/exchange-code', body);
+  }
+
   async listAccounts({ page = 1, pageSize = 100 } = {}) {
     return this.get('/admin/accounts', { page, page_size: pageSize });
   }
@@ -235,6 +310,30 @@ class Sub2ApiAdminClient {
     }
     if (matches.length > 1) {
       throw new Sub2ApiError('Sub2API account lookup returned duplicate exact email matches');
+    }
+    return matches[0] || null;
+  }
+
+  async findGeminiAccountByName(name, { pageSize = 100 } = {}) {
+    const expected = String(name || '').trim().toLowerCase();
+    if (!expected) throw new TypeError('name is required for Gemini account lookup');
+    const matches = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const listed = normalizeAccountPage(await this.listAccounts({ page, pageSize }));
+      for (const account of listed.accounts) {
+        if (
+          account?.platform === 'gemini' &&
+          typeof account.name === 'string' &&
+          account.name.trim().toLowerCase() === expected
+        ) matches.push(account);
+      }
+      if (
+        listed.accounts.length < pageSize ||
+        (listed.total !== undefined && page * pageSize >= listed.total)
+      ) break;
+    }
+    if (matches.length > 1) {
+      throw new Sub2ApiError('Sub2API Gemini account lookup returned duplicate exact-name matches');
     }
     return matches[0] || null;
   }
@@ -292,6 +391,43 @@ class Sub2ApiAdminClient {
     }
     throw new Sub2ApiError('Sub2API account import was not visible in the account list after the write');
   }
+
+  async importGeminiOAuthAccount({ email, exchangeResult, proxyId, verifyAttempts = 5 } = {}) {
+    const expectedEmail = String(email || '').trim();
+    if (!expectedEmail) throw new TypeError('email is required for Gemini account import');
+    const credentials = buildGeminiCredentials(exchangeResult);
+    const extra = exchangeResult?.extra && typeof exchangeResult.extra === 'object'
+      ? exchangeResult.extra
+      : undefined;
+    const existing = await this.findGeminiAccountByName(expectedEmail);
+    let action;
+    if (existing) {
+      await this.applyOAuthCredentials(existing.id, {
+        type: 'oauth',
+        credentials,
+        ...(extra ? { extra } : {}),
+      });
+      action = 'updated';
+    } else {
+      const body = {
+        name: expectedEmail,
+        platform: 'gemini',
+        type: 'oauth',
+        credentials,
+        ...(extra ? { extra } : {}),
+      };
+      if (proxyId !== undefined && proxyId !== null && proxyId !== '') body.proxy_id = proxyId;
+      await this.createAccount(body);
+      action = 'created';
+    }
+    const attempts = Math.max(1, Number(verifyAttempts) || 1);
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const verified = await this.findGeminiAccountByName(expectedEmail);
+      if (verified) return { action, accountId: verified.id };
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Sub2ApiError('Sub2API Gemini account import was not visible after the write');
+  }
 }
 
 function parseCodeInput(value) {
@@ -312,8 +448,10 @@ module.exports = {
   accountEmailCandidates,
   buildOpenAiCredentials,
   buildOpenAiExtraInfo,
+  buildGeminiCredentials,
   normalizeAccountPage,
   normalizeBaseUrl,
   normalizeApiPrefix,
+  normalizeGeminiOAuthType,
   parseCodeInput,
 };
