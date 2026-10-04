@@ -8,6 +8,11 @@ const {
 const { parseCallbackUrl } = require('../bitbrowser/window-controller');
 
 const GOOGLE_HOSTS = new Set(['accounts.google.com', 'consent.google.com']);
+const GOOGLE_USE_ANOTHER_ACCOUNT = /^(?:Use another account|使用其他账号|使用其他帐号|使用其他帳戶|使用其他帳號|換用其他帳戶|Dùng một tài khoản khác|Sử dụng tài khoản khác)$/i;
+const GOOGLE_TRY_ANOTHER_WAY = /^(?:Try another way|Choose another option|换一种方式|換一種方式|尝试其他方式|嘗試其他方式|試試其他方式|Thử cách khác)$/i;
+const GOOGLE_AUTHENTICATOR_METHOD = /(?:Google Authenticator|Authenticator app|verification code from (?:the )?Google Authenticator|Google 身份验证器|Google 身分驗證器|ứng dụng Google Authenticator)/i;
+const GOOGLE_CONSENT_ACTION = /^(?:Continue|Allow|Approve|Agree|继续|繼續|允许|允許|同意|Tiếp tục|Cho phép)$/i;
+const GOOGLE_MANUAL_CHALLENGE_TEXT = /(?:confirm you(?:'|’)?re not a robot|recaptcha|enter the characters you see|account recovery|check your phone|tap yes on your phone|确认您不是机器人|確認您不是機器人|输入您看到的字符|輸入您看到的字元|恢复账号|恢復帳戶|查看您的手机|查看您的手機|请在手机上点按|請在手機上輕觸|xác nhận bạn không phải là rô-bốt|kiểm tra điện thoại)/i;
 
 class GoogleLoginError extends Error {
   constructor(message, code = 'login_failed') {
@@ -30,24 +35,57 @@ function isAllowedGoogleOAuthLocation(value) {
   return GOOGLE_HOSTS.has(host) || host === 'codeassist.google.com';
 }
 
+function classifyGoogleChallengePath(value) {
+  const pathname = googlePath(value);
+  if (/\/challenge\/(?:totp|authenticator)(?:\/|$)/.test(pathname)) return 'totp';
+  if (/\/challenge\/(?:selection|chooser)(?:\/|$)/.test(pathname)) return 'challenge_selection';
+  if (/(?:\/challenge\/(?:captcha|recaptcha|speedbump|sorry)(?:\/|$)|\/(?:captcha|recaptcha|speedbump|sorry)(?:\/|$))/.test(pathname)) {
+    return 'manual_challenge';
+  }
+  return /\/challenge\//.test(pathname) && !/\/challenge\/pwd(?:\/|$)/.test(pathname)
+    ? 'challenge'
+    : '';
+}
+
 async function visible(locator) {
   return locator.isVisible().catch(() => false);
 }
 
+function googleText(page, pattern) {
+  return page.getByText(pattern).last();
+}
+
+async function hasManualGoogleChallenge(page) {
+  const direct = classifyGoogleChallengePath(page.url());
+  if (direct === 'manual_challenge') return true;
+  const frames = typeof page.frames === 'function' ? page.frames() : [];
+  if (frames.some((frame) => classifyGoogleChallengePath(frame.url?.() || '') === 'manual_challenge')) return true;
+  const body = await page.locator('body').innerText().catch(() => '');
+  return GOOGLE_MANUAL_CHALLENGE_TEXT.test(body);
+}
+
 async function detectGoogleOAuthPage(page, { allowAntigravity = false } = {}) {
   const host = googleHost(page.url());
-  const pathname = googlePath(page.url());
   if (!GOOGLE_HOSTS.has(host)) {
     return parseCallbackUrl(page.url(), { allowCodeAssist: true, allowAntigravity })
       ? 'redirected'
       : 'unexpected_redirect';
   }
-  if (/\/challenge\/(?:totp|authenticator)/.test(pathname)) return 'totp';
-  if (/\/challenge\//.test(pathname) && !/\/challenge\/pwd/.test(pathname)) return 'unsupported_challenge';
+  const challenge = classifyGoogleChallengePath(page.url());
+  if (challenge === 'totp') return 'totp';
+  if (challenge === 'manual_challenge') return 'manual_challenge';
   if (await visible(page.locator('input[type="email"], input#identifierId').first())) return 'email';
   if (await visible(page.locator('input[type="password"]').first())) return 'password';
-  if (await visible(page.getByText(/Use another account/i).first())) return 'choose_account';
-  if (await visible(page.getByRole('button', { name: /^(Continue|Allow)$/i }).last())) return 'consent';
+  if (await visible(googleText(page, GOOGLE_USE_ANOTHER_ACCOUNT))) return 'choose_account';
+  if (challenge === 'challenge_selection') return 'challenge_selection';
+  if (challenge === 'challenge' && await visible(googleText(page, GOOGLE_TRY_ANOTHER_WAY))) {
+    return 'challenge_alternatives';
+  }
+  if (challenge === 'challenge') {
+    return await hasManualGoogleChallenge(page) ? 'manual_challenge' : 'unsupported_challenge';
+  }
+  if (await visible(page.getByRole('button', { name: GOOGLE_CONSENT_ACTION }).last())) return 'consent';
+  if (await hasManualGoogleChallenge(page)) return 'manual_challenge';
   return 'waiting';
 }
 
@@ -64,6 +102,9 @@ async function assertGoogleLoginHealthy(page) {
   }
   if (/too many failed attempts|try again later|temporarily locked/i.test(text)) {
     throw new GoogleLoginError('Google login is temporarily rate limited', 'rate_limited');
+  }
+  if (/wrong code|incorrect code|invalid code|code you entered is incorrect/i.test(text)) {
+    throw new GoogleLoginError('Google rejected the two-factor code', 'invalid_two_factor');
   }
 }
 
@@ -104,6 +145,8 @@ class GoogleGeminiOAuthImportFlow {
   async completeLogin(page, { timeoutMs = 5 * 60_000, allowAntigravity = false } = {}) {
     const deadline = Date.now() + timeoutMs;
     let submittedRoute = '';
+    let submittedAt = 0;
+    let waitingSince = 0;
     while (Date.now() < deadline) {
       await assertGoogleLoginHealthy(page);
       const route = await detectGoogleOAuthPage(page, { allowAntigravity });
@@ -111,16 +154,31 @@ class GoogleGeminiOAuthImportFlow {
       if (route === 'unexpected_redirect') {
         throw new GoogleLoginError('Google OAuth redirected to an unexpected site', 'unexpected_redirect');
       }
-      if (route === 'unsupported_challenge') {
+      if (route === 'unsupported_challenge' || route === 'manual_challenge') {
         throw new GoogleLoginError('Google requested an unsupported verification challenge', 'manual_challenge');
       }
-      if (submittedRoute && route !== submittedRoute) submittedRoute = '';
+      if (route === 'waiting') {
+        if (!waitingSince) waitingSince = Date.now();
+        if (Date.now() - waitingSince >= 20_000) {
+          throw new GoogleLoginError('Google OAuth reached an unrecognized page state', 'unrecognized_page');
+        }
+        await page.waitForTimeout(300);
+        continue;
+      }
+      waitingSince = 0;
+      if (submittedRoute && route !== submittedRoute) {
+        submittedRoute = '';
+        submittedAt = 0;
+      }
       if (submittedRoute === route) {
+        if (submittedAt && Date.now() - submittedAt >= 45_000) {
+          throw new GoogleLoginError('Google OAuth did not advance after a login step', 'login_stalled');
+        }
         await page.waitForTimeout(300);
         continue;
       }
       if (route === 'choose_account') {
-        await page.getByText(/Use another account/i).first().click({ timeout: 5_000 });
+        await googleText(page, GOOGLE_USE_ANOTHER_ACCOUNT).click({ timeout: 5_000 });
       } else if (route === 'email') {
         const input = page.locator('input[type="email"], input#identifierId').first();
         await input.fill(this.account.email, { timeout: 5_000 });
@@ -140,11 +198,20 @@ class GoogleGeminiOAuthImportFlow {
         }
         await input.fill(code, { timeout: 5_000 });
         await input.press('Enter', { timeout: 5_000 });
+      } else if (route === 'challenge_alternatives') {
+        await googleText(page, GOOGLE_TRY_ANOTHER_WAY).click({ timeout: 5_000 });
+      } else if (route === 'challenge_selection') {
+        const authenticator = googleText(page, GOOGLE_AUTHENTICATOR_METHOD);
+        if (!await visible(authenticator)) {
+          throw new GoogleLoginError('Google did not offer the configured Authenticator method', 'manual_challenge');
+        }
+        await authenticator.click({ timeout: 5_000 });
       } else {
         await page.waitForTimeout(300);
         continue;
       }
       submittedRoute = route;
+      submittedAt = Date.now();
       await page.waitForTimeout(800);
     }
     throw new GoogleLoginError('Google OAuth login did not reach consent', 'timeout');
@@ -204,14 +271,14 @@ class GoogleGeminiOAuthImportFlow {
         for (let step = 0; step < 4; step += 1) {
           const route = await detectGoogleOAuthPage(session.page);
           if (route === 'redirected') break;
-          if (route === 'unsupported_challenge') {
+          if (route === 'unsupported_challenge' || route === 'manual_challenge') {
             throw new GoogleLoginError('Google requested an unsupported verification challenge', 'manual_challenge');
           }
           if (route !== 'consent') {
             await session.page.waitForTimeout(500);
             continue;
           }
-          const authorize = session.page.getByRole('button', { name: /^(Continue|Allow)$/i }).last();
+          const authorize = session.page.getByRole('button', { name: GOOGLE_CONSENT_ACTION }).last();
           await authorize.click({ timeout: 10_000 });
           await session.page.waitForTimeout(800);
         }
@@ -244,7 +311,12 @@ module.exports = {
   GOOGLE_HOSTS,
   GoogleGeminiOAuthImportFlow,
   GoogleLoginError,
+  GOOGLE_AUTHENTICATOR_METHOD,
+  GOOGLE_CONSENT_ACTION,
+  GOOGLE_TRY_ANOTHER_WAY,
+  GOOGLE_USE_ANOTHER_ACCOUNT,
   assertGoogleLoginHealthy,
+  classifyGoogleChallengePath,
   detectGoogleOAuthPage,
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,

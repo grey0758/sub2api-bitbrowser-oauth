@@ -3,6 +3,7 @@
 const {
   GoogleGeminiOAuthImportFlow,
   GoogleLoginError,
+  GOOGLE_CONSENT_ACTION,
   detectGoogleOAuthPage,
   isAllowedGoogleOAuthLocation,
 } = require('./google-gemini-import');
@@ -39,14 +40,14 @@ class GoogleAntigravityOAuthImportFlow extends GoogleGeminiOAuthImportFlow {
         for (let step = 0; step < 4; step += 1) {
           const route = await detectGoogleOAuthPage(session.page, { allowAntigravity: true });
           if (route === 'redirected') break;
-          if (route === 'unsupported_challenge') {
+          if (route === 'unsupported_challenge' || route === 'manual_challenge') {
             throw new GoogleLoginError('Google requested an unsupported verification challenge', 'manual_challenge');
           }
           if (route !== 'consent') {
             await session.page.waitForTimeout(500);
             continue;
           }
-          await session.page.getByRole('button', { name: /^(Continue|Allow)$/i }).last()
+          await session.page.getByRole('button', { name: GOOGLE_CONSENT_ACTION }).last()
             .click({ timeout: 10_000 });
           await session.page.waitForTimeout(800);
         }

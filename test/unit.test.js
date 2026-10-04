@@ -42,6 +42,8 @@ const {
 const {
   GoogleGeminiOAuthImportFlow,
   GoogleLoginError,
+  classifyGoogleChallengePath,
+  detectGoogleOAuthPage,
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
 } = require('../src/oauth/google-gemini-import');
@@ -588,6 +590,65 @@ test('Gemini credential validation and Google HTTPS two-factor retrieval are bou
   await assert.rejects(
     () => readGoogleTwoFactor({ kind: 'unsupported', value: 'runtime-only' }, page),
     (error) => error instanceof GoogleLoginError && error.code === 'two_factor_unavailable'
+  );
+});
+
+test('Google OAuth classifies authenticator selection and manual challenge routes without page data', () => {
+  assert.equal(classifyGoogleChallengePath('https://accounts.google.com/signin/v2/challenge/totp'), 'totp');
+  assert.equal(classifyGoogleChallengePath('https://accounts.google.com/signin/v2/challenge/selection'), 'challenge_selection');
+  assert.equal(classifyGoogleChallengePath('https://accounts.google.com/signin/v2/challenge/recaptcha'), 'manual_challenge');
+  assert.equal(classifyGoogleChallengePath('https://accounts.google.com/signin/v2/challenge/ipp'), 'challenge');
+  assert.equal(classifyGoogleChallengePath('https://accounts.google.com/signin/v2/challenge/pwd'), '');
+});
+
+test('Google OAuth recognizes localized account chooser and bounded authenticator alternatives', async () => {
+  const hidden = { async isVisible() { return false; } };
+  const text = '使用其他账号';
+  const page = {
+    url: () => 'https://accounts.google.com/signin/v2/identifier',
+    locator() {
+      return { first: () => hidden, async innerText() { return ''; } };
+    },
+    getByText(pattern) {
+      return { last: () => ({ async isVisible() { return pattern.test(text); } }) };
+    },
+    getByRole() { return { last: () => hidden }; },
+    frames() { return []; },
+  };
+  assert.equal(await detectGoogleOAuthPage(page), 'choose_account');
+
+  page.url = () => 'https://accounts.google.com/signin/v2/challenge/ipp';
+  const alternative = 'Try another way';
+  page.getByText = (pattern) => ({ last: () => ({ async isVisible() { return pattern.test(alternative); } }) });
+  assert.equal(await detectGoogleOAuthPage(page), 'challenge_alternatives');
+});
+
+test('Google OAuth stops instead of entering TOTP on CAPTCHA routes', async () => {
+  const flow = new GoogleGeminiOAuthImportFlow({
+    sub2api: {},
+    browser: {},
+    account: {
+      email: 'google@example.com',
+      password: 'runtime-only',
+      twoFactor: { kind: 'totp-secret', value: 'JBSWY3DPEHPK3PXP' },
+    },
+  });
+  const page = {
+    url: () => 'https://accounts.google.com/signin/v2/challenge/recaptcha',
+    locator() {
+      return {
+        first: () => ({ async isVisible() { return false; } }),
+        async innerText() { return ''; },
+      };
+    },
+    getByText() { return { last: () => ({ async isVisible() { return false; } }) }; },
+    getByRole() { return { last: () => ({ async isVisible() { return false; } }) }; },
+    frames() { return []; },
+    async waitForTimeout() {},
+  };
+  await assert.rejects(
+    () => flow.completeLogin(page, { timeoutMs: 1_000 }),
+    (error) => error instanceof GoogleLoginError && error.code === 'manual_challenge'
   );
 });
 
