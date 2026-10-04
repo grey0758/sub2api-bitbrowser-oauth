@@ -464,23 +464,28 @@ test('Sub2API Gemini OAuth uses the supported endpoints and verifies account cre
     throw new Error(`unexpected request: ${options.method} ${parsed.pathname}`);
   };
   const client = new Sub2ApiAdminClient({ apiKey: 'runtime-only', fetchImpl });
-  const authorization = await client.generateGeminiAuthUrl({ oauthType: 'google_one' });
+  const authorization = await client.generateGeminiAuthUrl({ oauthType: 'google_one', proxyId: 7 });
   assert.equal(authorization.oauthType, 'google_one');
   const exchanged = await client.exchangeGeminiCode({
     sessionId: authorization.sessionId,
     code: 'callback-code',
     state: authorization.state,
     oauthType: authorization.oauthType,
+    proxyId: 7,
   });
   assert.deepEqual(await client.importGeminiOAuthAccount({
     email: 'google@example.com',
     exchangeResult: exchanged,
+    proxyId: 7,
   }), { action: 'created', accountId: 11 });
   assert.equal(calls.find((item) => item[1].endsWith('/oauth/auth-url'))[2].oauth_type, 'google_one');
+  assert.equal(calls.find((item) => item[1].endsWith('/oauth/auth-url'))[2].proxy_id, 7);
   assert.equal(calls.find((item) => item[1].endsWith('/oauth/exchange-code'))[2].state, 'gemini-state');
+  assert.equal(calls.find((item) => item[1].endsWith('/oauth/exchange-code'))[2].proxy_id, 7);
   const createBody = calls.find((item) => item[0] === 'POST' && item[1].endsWith('/admin/accounts'))[2];
   assert.equal(createBody.platform, 'gemini');
   assert.equal(createBody.type, 'oauth');
+  assert.equal(createBody.proxy_id, 7);
   assert.equal(createBody.credentials.expires_at, '1700000000');
 });
 
@@ -839,10 +844,10 @@ test('direct browser egress is an explicit launch-only option on the exact profi
 });
 
 test('CLI accepts and documents incognito mode', () => {
-  assert.deepEqual(parseArgs(['start', '--incognito', '--proxy-id', 'proxy']), {
+  assert.deepEqual(parseArgs(['start', '--incognito', '--proxy-id', '7']), {
     command: 'start',
     incognito: true,
-    proxyId: 'proxy',
+    proxyId: 7,
   });
   assert.match(usage(), /--incognito/);
   assert.match(usage(), /import-account/);
@@ -867,6 +872,11 @@ test('CLI accepts and documents incognito mode', () => {
     command: 'reauthorize-errors',
     retryBanned: true,
   });
+});
+
+test('CLI rejects non-numeric proxy IDs before any API call', () => {
+  assert.throws(() => parseArgs(['start', '--proxy-id', 'proxy']), /positive integer/);
+  assert.throws(() => parseArgs(['start', '--proxy-id', '0']), /positive integer/);
 });
 
 test('OpenAI account runtime values stay process-only and phone fields are lazy', () => {

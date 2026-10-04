@@ -42,7 +42,13 @@ function parseArgs(argv) {
   if (argv[0] === '--help' || argv[0] === '-h') args.help = true;
   for (let i = 1; i < argv.length; i += 1) {
     const item = argv[i];
-    if (item === '--proxy-id') args.proxyId = argv[++i];
+    if (item === '--proxy-id') {
+      const proxyId = Number(argv[++i]);
+      if (!Number.isInteger(proxyId) || proxyId <= 0) {
+        throw new Error('--proxy-id must be a positive integer');
+      }
+      args.proxyId = proxyId;
+    }
     else if (item === '--timeout-ms') args.timeoutMs = Number(argv[++i]);
     else if (item === '--limit') args.limit = Number(argv[++i]);
     else if (item === '--email') args.email = String(argv[++i] || '').trim();
