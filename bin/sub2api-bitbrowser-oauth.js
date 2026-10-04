@@ -116,6 +116,7 @@ function safeError(error) {
     if (error.code === 'manual_challenge') return 'Google requested a verification challenge that requires owner review';
     if (error.code === 'two_factor_unavailable') return 'Google two-factor code was unavailable';
     if (error.code === 'browser_rejected') return 'Google refused this BitBrowser login';
+    if (error.code === 'navigation_failed') return 'Google OAuth authorization page was unreachable';
     return 'Google OAuth login did not complete';
   }
   if (error instanceof WorkstationAutomationError) {

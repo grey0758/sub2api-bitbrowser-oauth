@@ -157,12 +157,21 @@ class GoogleGeminiOAuthImportFlow {
       oauthType,
       tierId,
     });
-    const session = await this.browser.open({
-      url: authorization.authUrl,
-      incognito,
-      waitUntil: 'commit',
-      timeoutMs: Math.min(timeoutMs, 90_000),
-    });
+    let session;
+    try {
+      session = await this.browser.open({
+        url: authorization.authUrl,
+        incognito,
+        waitUntil: 'commit',
+        timeoutMs: Math.min(timeoutMs, 90_000),
+      });
+    } catch {
+      // Playwright navigation errors include the complete OAuth URL (and its
+      // state) in their message. Convert them at this boundary so neither the
+      // CLI nor an operator log can expose that material.
+      await this.browser.release({ closeWindow: false }).catch(() => {});
+      throw new GoogleLoginError('Google OAuth authorization page was unreachable', 'navigation_failed');
+    }
     try {
       const login = await this.completeLogin(session.page, {
         timeoutMs: Math.min(timeoutMs, 5 * 60_000),

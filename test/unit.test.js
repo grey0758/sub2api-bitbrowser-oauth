@@ -512,6 +512,41 @@ test('Gemini credential validation and Google HTTPS two-factor retrieval are bou
   );
 });
 
+test('Google OAuth navigation failures are sanitized before reaching the CLI', async () => {
+  let released = false;
+  const flow = new (require('../src/oauth/google-gemini-import').GoogleGeminiOAuthImportFlow)({
+    sub2api: {
+      async generateGeminiAuthUrl() {
+        return {
+          authUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=secret-state',
+          sessionId: 'session',
+          state: 'secret-state',
+          oauthType: 'google_one',
+        };
+      },
+    },
+    browser: {
+      async open() {
+        throw new Error('page.goto failed at https://accounts.google.com/?state=secret-state');
+      },
+      async release() { released = true; },
+    },
+    account: {
+      email: 'google@example.com',
+      password: 'runtime-only',
+      twoFactor: { kind: 'totp-secret', value: 'JBSWY3DPEHPK3PXP' },
+    },
+  });
+  await assert.rejects(
+    () => flow.run(),
+    (error) => error instanceof GoogleLoginError &&
+      error.code === 'navigation_failed' &&
+      !error.message.includes('accounts.google.com') &&
+      !error.message.includes('secret-state')
+  );
+  assert.equal(released, true);
+});
+
 test('callback waiter captures the localhost request before Chrome replaces the URL', async () => {
   const page = new EventEmitter();
   const mainFrame = {};
