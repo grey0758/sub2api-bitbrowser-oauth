@@ -125,8 +125,10 @@ npm run pool-enable-resend
 npm run import-next
 ```
 
-The encrypted file is `.runtime/import-pool.dpapi`, which is Git-ignored and
-bound to the current Windows user by DPAPI. The CLI never prints pool rows.
+The OpenAI/GPT pool is `.runtime/import-pool.dpapi`; the physically separate
+Google pool is `.runtime/google-account-pool.dpapi`. Both are Git-ignored and
+bound to the Windows user that created each file through DPAPI. The CLI never
+prints pool rows or merges one file into the other.
 Account rows are tagged with an explicit provider. Existing version 1 rows are
 migrated to `openai`; Google rows use `google` and remain stored credentials
 only. The same email may exist once in each provider pool, while duplicates

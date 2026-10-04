@@ -133,7 +133,9 @@ profile and the Sub2API OpenAI OAuth account-import flow.
   pool files, CLI row output, and child-process administrator credential
   inheritance are prohibited.
 - Account-pool rows have an explicit provider. Legacy rows migrate to `openai`;
-  `google` rows are stored-only and must never enter OpenAI OAuth selection,
+  `google` rows live in the separate Git-ignored, current-user DPAPI file
+  `.runtime/google-account-pool.dpapi`, are stored-only, and must never enter
+  OpenAI OAuth selection,
   Workstation inventory synchronization, Sub2API health matching,
   reauthorization, phone claims, or banned-account replacement. Private
   conversation recovery must stream credentials directly into the DPAPI

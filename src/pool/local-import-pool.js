@@ -15,6 +15,13 @@ const LEGACY_POOL_VERSION = 1;
 const ACCOUNT_PROVIDERS = new Set(['openai', 'google']);
 const PHONE_COOLDOWN_MS = 45 * 60_000;
 const DEFAULT_POOL_FILE = path.resolve(__dirname, '..', '..', '.runtime', 'import-pool.dpapi');
+const DEFAULT_GOOGLE_POOL_FILE = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  '.runtime',
+  'google-account-pool.dpapi'
+);
 const DPAPI_PREFIX = 'dpapi-v1:';
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 const BAN_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -917,6 +924,7 @@ class LocalImportPoolStore {
 
 module.exports = {
   DEFAULT_POOL_FILE,
+  DEFAULT_GOOGLE_POOL_FILE,
   DPAPI_PREFIX,
   LocalImportPoolError,
   LocalImportPoolStore,

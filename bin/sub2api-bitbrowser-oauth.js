@@ -20,6 +20,7 @@ const {
 } = require('../src/workstation/automation-client');
 const { WorkstationInventoryImportCoordinator } = require('../src/workstation/inventory-import');
 const {
+  DEFAULT_GOOGLE_POOL_FILE,
   LocalImportPoolError,
   LocalImportPoolStore,
   parseAccountPoolSource,
@@ -145,7 +146,9 @@ async function main(argv = process.argv.slice(2)) {
     args.command === 'pool-import-google-accounts'
   ) {
     const source = await readStdin();
-    const pool = new LocalImportPoolStore();
+    const pool = new LocalImportPoolStore(
+      args.command === 'pool-import-google-accounts' ? { file: DEFAULT_GOOGLE_POOL_FILE } : undefined
+    );
     const result = args.command === 'pool-import-phones'
       ? await pool.importPhones(source)
       : args.command === 'pool-import-google-accounts'
@@ -155,20 +158,23 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
   if (args.command === 'pool-status' || args.command === 'pool-google-status') {
-    const summary = await new LocalImportPoolStore().summary();
     if (args.command === 'pool-google-status') {
+      const summary = await new LocalImportPoolStore({ file: DEFAULT_GOOGLE_POOL_FILE }).summary();
       console.log(
         `Local Google pool status: total=${summary.accounts.google.total}; ` +
         `stored=${summary.accounts.google.stored}.`
       );
       return;
     }
+    const summary = await new LocalImportPoolStore().summary();
+    const googleSummary = await new LocalImportPoolStore({ file: DEFAULT_GOOGLE_POOL_FILE }).summary();
     console.log(
       `Local pool status: phones total=${summary.phones.total}, available=${summary.phones.available}, ` +
       `cooldown=${summary.phones.cooldown}, invalid=${summary.phones.invalid}; ` +
       `OpenAI accounts total=${summary.accounts.openai.total}, pending=${summary.accounts.openai.pending}, ` +
-      `imported=${summary.accounts.openai.imported}; Google accounts total=${summary.accounts.google.total}, ` +
-      `stored=${summary.accounts.google.stored}; all accounts total=${summary.accounts.total}.`
+      `imported=${summary.accounts.openai.imported}; Google accounts total=${googleSummary.accounts.google.total}, ` +
+      `stored=${googleSummary.accounts.google.stored}; ` +
+      `all accounts total=${summary.accounts.openai.total + googleSummary.accounts.google.total}.`
     );
     return;
   }

@@ -50,6 +50,7 @@ const {
   classifyAccountError,
 } = require('../src/sub2api/account-health');
 const {
+  DEFAULT_GOOGLE_POOL_FILE,
   LocalImportPoolStore,
   PHONE_COOLDOWN_MS,
   POOL_VERSION,
@@ -1071,6 +1072,7 @@ test('OAuth flow enforces callback state before exchange', async () => {
 });
 
 test('local pool parsers validate phone URLs, TOTP secrets, and no-resend policy', () => {
+  assert.match(DEFAULT_GOOGLE_POOL_FILE, /google-account-pool\.dpapi$/);
   const phones = parsePhonePoolSource([
     '14109824518|https://sms.example.invalid/access?token=runtime-only',
     'bad-line',
