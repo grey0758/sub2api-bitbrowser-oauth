@@ -112,9 +112,9 @@ profile and the Sub2API OpenAI OAuth account-import flow.
    `/admin/gemini/oauth/exchange-code`.
 5. Create or update only the exact `platform=gemini` account name through the
    supported account endpoints. Mark the encrypted row `imported` only after a
-   fresh account list proves the exact name exists. Return failures to
-   `stored`; defer a rate-limited row for 15 minutes and explicitly rejected
-   credentials for 24 hours.
+   fresh account list proves the exact name exists. Mark account-level terminal
+   outcomes `review_required` with a sanitized reason and note; return only
+   infrastructure or protocol failures to `stored`.
 6. Never print the Google row, OAuth URL, callback code/state, token response,
    cookies, password, or two-factor value. Leave the browser profile open.
 7. Use `--direct-browser-egress` only after proving the saved profile proxy
@@ -136,8 +136,11 @@ profile and the Sub2API OpenAI OAuth account-import flow.
 3. When the owner replaces the Google queue, preserve the old DPAPI file in a
    restricted encrypted backup, reject the complete replacement if any input
    row is invalid, and report counts only.
-4. Stop after the requested first-account test. Never print the Google row,
-   password, TOTP secret, live code, OAuth URL/state/code, tokens, or cookies.
+4. Process only the number of accounts explicitly requested. Give each selected
+   account one automatic attempt; mark account-level terminal outcomes
+   `review_required` and skip them on later selection. Never print the Google
+   row, password, TOTP secret, live code, OAuth URL/state/code, tokens, or
+   cookies.
 
 ### Controlled deletion
 
@@ -182,8 +185,8 @@ profile and the Sub2API OpenAI OAuth account-import flow.
   inheritance are prohibited.
 - Account-pool rows have an explicit provider. Legacy rows migrate to `openai`;
   `google` rows live in the separate Git-ignored, current-user DPAPI file
-  `.runtime/google-account-pool.dpapi`, have an independent `stored`/`imported`
-  lifecycle, and must never enter OpenAI OAuth selection,
+  `.runtime/google-account-pool.dpapi`, have an independent
+  `stored`/`imported`/`review_required` lifecycle, and must never enter OpenAI OAuth selection,
   Workstation inventory synchronization, Sub2API health matching,
   reauthorization, phone claims, or banned-account replacement. Private
   conversation recovery must stream credentials directly into the DPAPI

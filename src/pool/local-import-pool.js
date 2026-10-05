@@ -13,6 +13,13 @@ const {
 const POOL_VERSION = 2;
 const LEGACY_POOL_VERSION = 1;
 const ACCOUNT_PROVIDERS = new Set(['openai', 'google']);
+const GOOGLE_REVIEW_REASONS = new Set([
+  'account_risk',
+  'browser_rejected',
+  'invalid_credentials',
+  'invalid_two_factor',
+  'rate_limited',
+]);
 const PHONE_COOLDOWN_MS = 45 * 60_000;
 const GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS = 24 * 60 * 60_000;
 const DEFAULT_POOL_FILE = path.resolve(__dirname, '..', '..', '.runtime', 'import-pool.dpapi');
@@ -282,7 +289,7 @@ function normalizeSnapshot(value) {
         ) ||
         (
           account.provider === 'google' &&
-          ['stored', 'imported'].includes(account.status) &&
+          ['stored', 'imported', 'review_required'].includes(account.status) &&
           typeof account.twoFactor === 'object' &&
           ['totp-secret', 'https-url'].includes(account.twoFactor?.kind) &&
           typeof account.twoFactor?.value === 'string' &&
@@ -296,6 +303,13 @@ function normalizeSnapshot(value) {
       !Number.isInteger(account.attempts) ||
       (account.nextAttemptAt !== undefined && account.nextAttemptAt !== null && !Number.isFinite(account.nextAttemptAt))
     ) throw new LocalImportPoolError('Local import pool is invalid', { code: 'pool_invalid' });
+    if (account.provider === 'google' && account.status === 'review_required' && (
+      !GOOGLE_REVIEW_REASONS.has(account.reviewReason) ||
+      typeof account.reviewNote !== 'string' ||
+      account.reviewNote.length < 1 ||
+      account.reviewNote.length > 160 ||
+      !Number.isFinite(account.reviewRequiredAt)
+    )) throw new LocalImportPoolError('Local import pool is invalid', { code: 'pool_invalid' });
     const claim = account.phoneClaim;
     if (claim !== undefined && claim !== null && (
       typeof claim !== 'object' ||
@@ -553,6 +567,35 @@ class LocalImportPoolStore {
       account.status = 'stored';
       account.lastOutcome = String(outcome || 'failed').slice(0, 64);
       account.nextAttemptAt = retryAfterMs > 0 ? this.now() + retryAfterMs : null;
+      delete account.reviewReason;
+      delete account.reviewNote;
+      delete account.reviewRequiredAt;
+    });
+  }
+
+  async markGoogleReviewRequired(id, reason, note) {
+    const normalizedReason = String(reason || '').trim();
+    const normalizedNote = String(note || '').trim();
+    if (!GOOGLE_REVIEW_REASONS.has(normalizedReason)) {
+      throw new TypeError('Google review reason is invalid');
+    }
+    if (!normalizedNote || normalizedNote.length > 160 || /[\r\n]/.test(normalizedNote)) {
+      throw new TypeError('Google review note is invalid');
+    }
+    await this.update((snapshot) => {
+      const account = snapshot.accounts.find((item) => item.id === id);
+      if (!account) throw new LocalImportPoolError('Local account entry was not found', { code: 'account_not_found' });
+      if (account.provider !== 'google') {
+        throw new LocalImportPoolError('Local account is not in the Google pool', {
+          code: 'account_provider_mismatch',
+        });
+      }
+      account.status = 'review_required';
+      account.lastOutcome = normalizedReason;
+      account.nextAttemptAt = null;
+      account.reviewReason = normalizedReason;
+      account.reviewNote = normalizedNote;
+      account.reviewRequiredAt = this.now();
     });
   }
 
@@ -1007,6 +1050,11 @@ class LocalImportPoolStore {
           total: googleAccounts.length,
           stored: googleAccounts.filter((item) => item.status === 'stored').length,
           imported: googleAccounts.filter((item) => item.status === 'imported').length,
+          reviewRequired: googleAccounts.filter((item) => item.status === 'review_required').length,
+          reviewReasons: Object.fromEntries([...GOOGLE_REVIEW_REASONS].map((reason) => [
+            reason,
+            googleAccounts.filter((item) => item.status === 'review_required' && item.reviewReason === reason).length,
+          ])),
         },
       },
     };
@@ -1018,6 +1066,7 @@ module.exports = {
   DEFAULT_GOOGLE_POOL_FILE,
   DPAPI_PREFIX,
   GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS,
+  GOOGLE_REVIEW_REASONS,
   LocalImportPoolError,
   LocalImportPoolStore,
   PHONE_COOLDOWN_MS,

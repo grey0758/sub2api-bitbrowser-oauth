@@ -192,8 +192,8 @@ bound to the Windows user that created each file through DPAPI. The CLI never
 prints pool rows or merges one file into the other.
 Account rows are tagged with an explicit provider. Existing version 1 rows are
 migrated to `openai`; Google rows use `google` and have an independent
-`stored`/`imported` lifecycle. The same email may exist once in each provider
-pool, while duplicates inside one provider are ignored.
+`stored`/`imported`/`review_required` lifecycle. The same email may exist once
+in each provider pool, while duplicates inside one provider are ignored.
 
 `pool-import-google-accounts` and `pool-replace-google-accounts` accept
 stdin-only `email|password|2FA` or `email----password----2FA` rows. `2FA` may
@@ -204,10 +204,11 @@ row is invalid. Before a replacement, preserve the existing
 `.runtime/google-account-pool.dpapi` as a current-user-only encrypted backup in
 `.runtime/backups/`; never decrypt or print it. The import command selects only
 a `stored` row, and changes it to `imported` only after the platform-specific
-Gemini or Antigravity account-list postcondition passes. A failed attempt
-returns the row to `stored`; a Google rate-limit result adds a 15-minute retry
-delay, while explicitly rejected credentials remain encrypted and are deferred
-for 24 hours before they are eligible again.
+Gemini or Antigravity account-list postcondition passes. Account-level terminal
+outcomes (manual risk challenge, browser rejection, invalid credentials or
+two-factor code, and rate limiting) become `review_required` with a sanitized
+reason and note, so automatic selection does not retry them. Infrastructure
+and protocol failures return the row to `stored` for operator diagnosis.
 `pool-google-status` prints counts only.
 Private-history recovery must stream extracted rows directly to this command;
 never save a transcript or plaintext credential export in the repository.

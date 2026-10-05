@@ -28,11 +28,18 @@ const {
 const { WorkstationInventoryImportCoordinator } = require('../src/workstation/inventory-import');
 const {
   DEFAULT_GOOGLE_POOL_FILE,
-  GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS,
   LocalImportPoolError,
   LocalImportPoolStore,
   parseAccountPoolSource,
 } = require('../src/pool/local-import-pool');
+
+const GOOGLE_REVIEW_ERROR_CODES = new Set([
+  'manual_challenge',
+  'invalid_credentials',
+  'invalid_two_factor',
+  'rate_limited',
+  'browser_rejected',
+]);
 
 async function readStdin() {
   const chunks = [];
@@ -163,6 +170,24 @@ function safeError(error) {
   return error?.message || String(error);
 }
 
+async function recordGoogleAttemptFailure(pool, selectedId, error) {
+  const outcome = error instanceof GoogleLoginError
+    ? error.code
+    : error instanceof Sub2ApiError
+      ? 'sub2api_error'
+      : 'failed';
+  if (error instanceof GoogleLoginError && GOOGLE_REVIEW_ERROR_CODES.has(error.code)) {
+    const reason = error.code === 'manual_challenge' ? 'account_risk' : error.code;
+    await pool.markGoogleReviewRequired(
+      selectedId,
+      reason,
+      `Automatic OAuth stopped after sanitized outcome: ${reason}. Owner review required.`
+    ).catch(() => {});
+    return;
+  }
+  await pool.markGoogleStored(selectedId, outcome).catch(() => {});
+}
+
 async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   if (args.help) { console.log(usage()); return; }
@@ -204,7 +229,8 @@ async function main(argv = process.argv.slice(2)) {
       const summary = await new LocalImportPoolStore({ file: DEFAULT_GOOGLE_POOL_FILE }).summary();
       console.log(
         `Local Google pool status: total=${summary.accounts.google.total}; ` +
-        `stored=${summary.accounts.google.stored}; imported=${summary.accounts.google.imported}.`
+        `stored=${summary.accounts.google.stored}; imported=${summary.accounts.google.imported}; ` +
+        `review-required=${summary.accounts.google.reviewRequired}.`
       );
       return;
     }
@@ -298,20 +324,7 @@ async function main(argv = process.argv.slice(2)) {
       await pool.markGoogleImported(selected.id);
       console.log(`Google OAuth account ${completed.action} and verified in the Sub2API Gemini pool.`);
     } catch (error) {
-      const outcome = error instanceof GoogleLoginError
-        ? error.code
-        : error instanceof Sub2ApiError
-          ? 'sub2api_error'
-          : 'failed';
-      await pool.markGoogleStored(selected.id, outcome, {
-        retryAfterMs: error instanceof GoogleLoginError
-          ? error.code === 'rate_limited'
-            ? 15 * 60_000
-            : error.code === 'invalid_credentials'
-              ? GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS
-              : 0
-          : 0,
-      }).catch(() => {});
+      await recordGoogleAttemptFailure(pool, selected.id, error);
       throw error;
     }
     return;
@@ -339,20 +352,7 @@ async function main(argv = process.argv.slice(2)) {
       await pool.markGoogleImported(selected.id);
       console.log(`Google OAuth account ${completed.action} and verified in the Sub2API Antigravity pool.`);
     } catch (error) {
-      const outcome = error instanceof GoogleLoginError
-        ? error.code
-        : error instanceof Sub2ApiError
-          ? 'sub2api_error'
-          : 'failed';
-      await pool.markGoogleStored(selected.id, outcome, {
-        retryAfterMs: error instanceof GoogleLoginError
-          ? error.code === 'rate_limited'
-            ? 15 * 60_000
-            : error.code === 'invalid_credentials'
-              ? GOOGLE_INVALID_CREDENTIAL_BACKOFF_MS
-              : 0
-          : 0,
-      }).catch(() => {});
+      await recordGoogleAttemptFailure(pool, selected.id, error);
       throw error;
     }
     return;
@@ -726,4 +726,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, parseArgs, safeError, usage };
+module.exports = { main, parseArgs, recordGoogleAttemptFailure, safeError, usage };

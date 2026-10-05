@@ -76,7 +76,12 @@ const {
   parseGoogleAccountPoolSource,
   parsePhonePoolSource,
 } = require('../src/pool/local-import-pool');
-const { parseArgs, safeError, usage } = require('../bin/sub2api-bitbrowser-oauth');
+const {
+  parseArgs,
+  recordGoogleAttemptFailure,
+  safeError,
+  usage,
+} = require('../bin/sub2api-bitbrowser-oauth');
 
 test('runtime environment parser only accepts allowlisted non-empty values', () => {
   assert.deepEqual(parseRuntimeEnv('\n# comment\nSUB2API_ADMIN_API_KEY=secret\nSUB2API_BASE_URL=https://sub2apipro.opencodex.uk\n'), {
@@ -1659,7 +1664,19 @@ test('local pool encrypts its file and enforces the 45-minute phone cooldown', a
     assert.deepEqual((await store.summary()).accounts, {
       total: 1,
       openai: { total: 1, pending: 0, imported: 1 },
-      google: { total: 0, stored: 0, imported: 0 },
+      google: {
+        total: 0,
+        stored: 0,
+        imported: 0,
+        reviewRequired: 0,
+        reviewReasons: {
+          account_risk: 0,
+          browser_rejected: 0,
+          invalid_credentials: 0,
+          invalid_two_factor: 0,
+          rate_limited: 0,
+        },
+      },
     });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -1729,7 +1746,19 @@ test('local pool isolates Google credentials from OpenAI selection and permits c
     assert.deepEqual((await store.summary()).accounts, {
       total: 2,
       openai: { total: 1, pending: 1, imported: 0 },
-      google: { total: 1, stored: 0, imported: 1 },
+      google: {
+        total: 1,
+        stored: 0,
+        imported: 1,
+        reviewRequired: 0,
+        reviewReasons: {
+          account_risk: 0,
+          browser_rejected: 0,
+          invalid_credentials: 0,
+          invalid_two_factor: 0,
+          rate_limited: 0,
+        },
+      },
     });
     await assert.rejects(() => store.beginNextGoogleAttempt(), /No stored Google account/);
   } finally {
@@ -1763,6 +1792,52 @@ test('local pool defers rejected Google credentials for 24 hours', async () => {
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('local Google pool retains review status and sanitized note while skipping selection', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-google-review-'));
+  const file = path.join(directory, 'google.dpapi');
+  const store = new LocalImportPoolStore({
+    file,
+    protect: async (value) => Buffer.from(value).toString('base64'),
+    unprotect: async (value) => Buffer.from(value, 'base64').toString('utf8'),
+    now: () => 1_700_000_000_000,
+  });
+  await store.importGoogleAccounts([
+    'first@example.com|password|JBSWY3DPEHPK3PXP',
+    'second@example.com|password|JBSWY3DPEHPK3PXP',
+  ].join('\n'));
+  const first = await store.beginNextGoogleAttempt();
+  await store.markGoogleReviewRequired(
+    first.id,
+    'account_risk',
+    'Automatic OAuth stopped after sanitized outcome: account_risk. Owner review required.'
+  );
+  const second = await store.beginNextGoogleAttempt();
+  assert.equal(second.email, 'second@example.com');
+  const snapshot = await store.load();
+  const reviewed = snapshot.accounts.find((item) => item.id === first.id);
+  assert.equal(reviewed.status, 'review_required');
+  assert.equal(reviewed.reviewReason, 'account_risk');
+  assert.equal(reviewed.reviewRequiredAt, 1_700_000_000_000);
+  const summary = await store.summary();
+  assert.equal(summary.accounts.google.reviewRequired, 1);
+  assert.equal(summary.accounts.google.reviewReasons.account_risk, 1);
+});
+
+test('Google OAuth terminal account outcomes require review while infrastructure failures remain selectable', async () => {
+  const calls = [];
+  const pool = {
+    async markGoogleReviewRequired(...args) { calls.push(['review', ...args]); },
+    async markGoogleStored(...args) { calls.push(['stored', ...args]); },
+  };
+  await recordGoogleAttemptFailure(pool, 'first-id', new GoogleLoginError('sanitized', 'manual_challenge'));
+  await recordGoogleAttemptFailure(pool, 'second-id', new GoogleLoginError('sanitized', 'navigation_failed'));
+  assert.equal(calls[0][0], 'review');
+  assert.equal(calls[0][1], 'first-id');
+  assert.equal(calls[0][2], 'account_risk');
+  assert.match(calls[0][3], /account_risk/);
+  assert.deepEqual(calls[1], ['stored', 'second-id', 'navigation_failed']);
 });
 
 test('local pool atomically replaces old Google rows and accepts dashed private input', async () => {
