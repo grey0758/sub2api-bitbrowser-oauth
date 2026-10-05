@@ -47,6 +47,7 @@ const {
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
   safeGooglePageSnapshot,
+  googleRequestCategory,
   typeAndSubmitGoogleField,
   withGoogleLoginHint,
 } = require('../src/oauth/google-gemini-import');
@@ -641,10 +642,18 @@ test('Google OAuth types sequentially and clicks the visible Next control', asyn
   };
   await typeAndSubmitGoogleField({
     getByRole() { return { last: () => next }; },
+    async waitForTimeout(ms) { calls.push(['wait', ms]); },
   }, input, 'runtime-only');
   assert.deepEqual(calls, [
-    'click-input', ['fill', ''], ['type', 'runtime-only', 85], 'click-next',
+    'click-input', ['fill', ''], ['type', 'runtime-only', 85], ['wait', 600], 'click-next',
   ]);
+});
+
+test('Google OAuth network diagnostics expose only endpoint categories', () => {
+  assert.equal(googleRequestCategory('https://accounts.google.com/_/signin/sl/lookup?email=secret'), 'accounts_lookup');
+  assert.equal(googleRequestCategory('https://accounts.google.com/v3/signin/challenge/pwd'), 'accounts_challenge');
+  assert.equal(googleRequestCategory('https://ssl.gstatic.com/accounts/static.js'), 'google_static');
+  assert.equal(googleRequestCategory('https://attacker.example/?secret=value'), 'other');
 });
 
 test('Google OAuth login hint preserves authorization state without accepting another host', () => {

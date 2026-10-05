@@ -65,9 +65,58 @@ async function typeAndSubmitGoogleField(page, input, value) {
   await input.click({ timeout: 5_000 });
   await input.fill('', { timeout: 5_000 });
   await input.pressSequentially(value, { delay: 85, timeout: 30_000 });
+  await page.waitForTimeout(600);
   const next = page.getByRole('button', { name: GOOGLE_NEXT_ACTION }).last();
   if (await visible(next)) await next.click({ timeout: 5_000 });
   else await input.press('Enter', { timeout: 5_000 });
+}
+
+function googleRequestCategory(value) {
+  let parsed;
+  try { parsed = new URL(value); } catch { return 'invalid'; }
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+  if (host === 'accounts.google.com') {
+    if (/\/(?:lookup|identifier)(?:\/|$)/.test(path)) return 'accounts_lookup';
+    if (/\/challenge(?:\/|$)/.test(path)) return 'accounts_challenge';
+    if (/\/signin(?:\/|$)/.test(path)) return 'accounts_signin';
+    return 'accounts_other';
+  }
+  if (host === 'ssl.gstatic.com' || host.endsWith('.gstatic.com')) return 'google_static';
+  if (host === 'www.google.com' || host === 'google.com') return 'google_web';
+  if (host === 'www.recaptcha.net' || host === 'recaptcha.net') return 'recaptcha';
+  return 'other';
+}
+
+function observeSanitizedGoogleNetwork(page, observer) {
+  if (typeof observer !== 'function') return () => {};
+  const onFailed = (request) => {
+    const failure = String(request.failure()?.errorText || 'failed');
+    observer({
+      event: 'request_failed',
+      request: googleRequestCategory(request.url()),
+      failure: /timed out|timeout/i.test(failure) ? 'timeout'
+        : /refused/i.test(failure) ? 'refused'
+          : /aborted/i.test(failure) ? 'aborted'
+            : /reset|closed/i.test(failure) ? 'connection_reset'
+              : /name_not_resolved/i.test(failure) ? 'dns'
+                : 'transport',
+    });
+  };
+  const onResponse = (response) => {
+    if (response.status() < 400) return;
+    observer({
+      event: 'http_error',
+      request: googleRequestCategory(response.url()),
+      status: response.status(),
+    });
+  };
+  page.on('requestfailed', onFailed);
+  page.on('response', onResponse);
+  return () => {
+    page.off('requestfailed', onFailed);
+    page.off('response', onResponse);
+  };
 }
 
 function googleText(page, pattern) {
@@ -243,6 +292,8 @@ class GoogleGeminiOAuthImportFlow {
     let submittedAt = 0;
     let waitingSince = 0;
     let lastSnapshot = '';
+    const stopNetworkObservation = observeSanitizedGoogleNetwork(page, this.stateObserver);
+    try {
     while (Date.now() < deadline) {
       await assertGoogleLoginHealthy(page);
       const route = await detectGoogleOAuthPage(page, { allowAntigravity });
@@ -316,6 +367,9 @@ class GoogleGeminiOAuthImportFlow {
       await page.waitForTimeout(800);
     }
     throw new GoogleLoginError('Google OAuth login did not reach consent', 'timeout');
+    } finally {
+      stopNetworkObservation();
+    }
   }
 
   async run({
@@ -423,6 +477,8 @@ module.exports = {
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
   safeGooglePageSnapshot,
+  googleRequestCategory,
+  observeSanitizedGoogleNetwork,
   typeAndSubmitGoogleField,
   withGoogleLoginHint,
 };
