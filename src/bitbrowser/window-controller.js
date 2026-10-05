@@ -37,6 +37,8 @@ class FixedWindowController {
     url,
     incognito = false,
     directEgress = false,
+    restartForLaunchArgs = false,
+    useDefaultContext = false,
     waitUntil = 'domcontentloaded',
     timeoutMs = 60_000,
   } = {}) {
@@ -45,16 +47,20 @@ class FixedWindowController {
     const args = [];
     if (incognito) args.push('--incognito');
     if (directEgress) args.push('--no-proxy-server');
+    if (restartForLaunchArgs && args.length > 0 && Number(window.status) === 1) {
+      await this.client.closeWindow(window.id);
+    }
     const opened = await this.client.openWindow(window.id, args.length > 0 ? { args } : {});
     const browser = await this.chromium.connectOverCDP(opened.ws, { timeout: this.connectTimeoutMs });
     // The launch argument only takes effect when BitBrowser starts the window.
     // Create an isolated context as well so an already-open fixed window does
     // not reuse cookies from an earlier account attempt.
-    const context = incognito
+    const context = incognito && !useDefaultContext
       ? await browser.newContext()
       : browser.contexts()[0] || await browser.newContext();
+    const ownsContext = incognito && !useDefaultContext;
     const page = context.pages()[0] || await context.newPage();
-    this.session = new FixedWindowSession({ controller: this, browser, context, page, window, incognito });
+    this.session = new FixedWindowSession({ controller: this, browser, context, page, window, incognito, ownsContext });
     if (url) await page.goto(url, { waitUntil, timeout: timeoutMs });
     return this.session;
   }
@@ -69,13 +75,14 @@ class FixedWindowController {
 }
 
 class FixedWindowSession {
-  constructor({ controller, browser, context, page, window, incognito = false }) {
+  constructor({ controller, browser, context, page, window, incognito = false, ownsContext = incognito }) {
     this.controller = controller;
     this.browser = browser;
     this.context = context;
     this.page = page;
     this.window = window;
     this.incognito = incognito;
+    this.ownsContext = ownsContext;
   }
 
   async goto(url, options = {}) {
@@ -157,7 +164,7 @@ class FixedWindowSession {
   async disconnect() {
     // Playwright's CDP close disconnects the client; it does not call the
     // BitBrowser /browser/close endpoint. Keep the named profile available.
-    if (this.incognito) await this.context.close().catch(() => {});
+    if (this.ownsContext) await this.context.close().catch(() => {});
     await this.browser.close().catch(() => {});
   }
 }

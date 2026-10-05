@@ -15,6 +15,8 @@ class GoogleAntigravityOAuthImportFlow extends GoogleGeminiOAuthImportFlow {
     try {
       session = await this.browser.open({
         incognito,
+        restartForLaunchArgs: true,
+        useDefaultContext: true,
         timeoutMs: Math.min(timeoutMs, 90_000),
       });
       try {

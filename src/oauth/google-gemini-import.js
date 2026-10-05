@@ -162,6 +162,9 @@ async function detectGoogleOAuthPage(page, { allowAntigravity = false } = {}) {
 }
 
 async function assertGoogleLoginHealthy(page) {
+  if (/\/v\d+\/signin\/rejected(?:\/|$)/.test(googlePath(page.url()))) {
+    throw new GoogleLoginError('Google refused this browser login', 'browser_rejected');
+  }
   const text = await page.locator('body').innerText().catch(() => '');
   if (
     /wrong password|incorrect password|password (?:is )?incorrect/i.test(text) ||
