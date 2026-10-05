@@ -55,6 +55,78 @@ function googleText(page, pattern) {
   return page.getByText(pattern).last();
 }
 
+function googleLocationCategory(value, { allowAntigravity = false } = {}) {
+  const host = googleHost(value);
+  const pathname = googlePath(value);
+  if (parseCallbackUrl(value, { allowCodeAssist: true, allowAntigravity })) return 'callback';
+  if (host === 'consent.google.com') return 'consent_host';
+  if (host !== 'accounts.google.com') return 'unexpected_host';
+  if (/\/signin\/oauth(?:\/|$)/.test(pathname)) return 'signin_oauth';
+  if (/\/signin\/v2\/identifier(?:\/|$)/.test(pathname)) return 'identifier';
+  if (/\/challenge\/(?:totp|authenticator)(?:\/|$)/.test(pathname)) return 'totp';
+  if (/\/challenge\/(?:selection|chooser)(?:\/|$)/.test(pathname)) return 'challenge_selection';
+  if (/\/challenge\/pwd(?:\/|$)/.test(pathname)) return 'password';
+  if (/\/challenge\//.test(pathname)) return 'other_challenge';
+  if (/\/o\/oauth2\//.test(pathname)) return 'oauth_entry';
+  if (/\/signin\//.test(pathname)) return 'signin_other';
+  return 'google_other';
+}
+
+async function safeGooglePageSnapshot(page, { allowAntigravity = false, route = '' } = {}) {
+  const structure = await page.evaluate(() => {
+    const visible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+    };
+    const bodyText = String(document.body?.innerText || '');
+    const normalized = bodyText.toLowerCase().replace(/\s+/g, ' ').trim();
+    const inputTypes = [...document.querySelectorAll('input')]
+      .filter(visible)
+      .map((element) => String(element.type || 'text').toLowerCase())
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .sort();
+    return {
+      readyState: document.readyState,
+      bodyLength: bodyText.length === 0 ? 'empty' : bodyText.length <= 128 ? 'short' : bodyText.length <= 1024 ? 'medium' : 'long',
+      bodyChildren: document.body?.childElementCount || 0,
+      visibleInputs: document.querySelectorAll('input').length ? inputTypes : [],
+      visibleButtons: [...document.querySelectorAll('button,[role="button"]')].filter(visible).length,
+      visibleLinks: [...document.querySelectorAll('a,[role="link"]')].filter(visible).length,
+      identifierTiles: document.querySelectorAll('[data-identifier]').length,
+      scripts: document.scripts.length,
+      frames: document.querySelectorAll('iframe').length,
+      markers: {
+        browserRejected: /browser or app may not be secure|浏览器或应用可能不安全|瀏覽器或應用程式可能不安全|trình duyệt hoặc ứng dụng này có thể không an toàn/.test(normalized),
+        javascriptRequired: /enable javascript|javascript.*required|启用 javascript|啟用 javascript|bật javascript/.test(normalized),
+        genericError: /something went wrong|couldn.t sign you in|出了点问题|發生錯誤|无法登录|無法登入|đã xảy ra lỗi|không thể đăng nhập/.test(normalized),
+        chooseAccount: /choose an account|选择帐号|选择账号|選擇帳戶|chọn một tài khoản/.test(normalized),
+        accessBlocked: /access blocked|request is invalid|error 400|error 403|拒绝访问|存取遭封鎖|yêu cầu không hợp lệ/.test(normalized),
+      },
+    };
+  }).catch(() => ({
+    readyState: 'unavailable',
+    bodyLength: 'unavailable',
+    bodyChildren: -1,
+    visibleInputs: [],
+    visibleButtons: -1,
+    visibleLinks: -1,
+    identifierTiles: -1,
+    scripts: -1,
+    frames: -1,
+    markers: {},
+  }));
+  const frameCategories = typeof page.frames === 'function'
+    ? [...new Set(page.frames().slice(1).map((frame) => googleLocationCategory(frame.url?.() || '', { allowAntigravity })))].sort()
+    : [];
+  return {
+    route,
+    location: googleLocationCategory(page.url(), { allowAntigravity }),
+    ...structure,
+    frameCategories,
+  };
+}
+
 async function hasManualGoogleChallenge(page) {
   const direct = classifyGoogleChallengePath(page.url());
   if (direct === 'manual_challenge') return true;
@@ -132,7 +204,7 @@ async function readGoogleTwoFactor(twoFactor, page, {
 }
 
 class GoogleGeminiOAuthImportFlow {
-  constructor({ sub2api, browser, account, requestText = directSmsRequest } = {}) {
+  constructor({ sub2api, browser, account, requestText = directSmsRequest, stateObserver } = {}) {
     if (!sub2api) throw new TypeError('sub2api client is required');
     if (!browser) throw new TypeError('browser controller is required');
     if (!account) throw new TypeError('Google account values are required');
@@ -140,6 +212,7 @@ class GoogleGeminiOAuthImportFlow {
     this.browser = browser;
     this.account = account;
     this.requestText = requestText;
+    this.stateObserver = typeof stateObserver === 'function' ? stateObserver : null;
   }
 
   async completeLogin(page, { timeoutMs = 5 * 60_000, allowAntigravity = false } = {}) {
@@ -147,9 +220,18 @@ class GoogleGeminiOAuthImportFlow {
     let submittedRoute = '';
     let submittedAt = 0;
     let waitingSince = 0;
+    let lastSnapshot = '';
     while (Date.now() < deadline) {
       await assertGoogleLoginHealthy(page);
       const route = await detectGoogleOAuthPage(page, { allowAntigravity });
+      if (this.stateObserver) {
+        const snapshot = await safeGooglePageSnapshot(page, { allowAntigravity, route });
+        const serialized = JSON.stringify(snapshot);
+        if (serialized !== lastSnapshot) {
+          await this.stateObserver(snapshot);
+          lastSnapshot = serialized;
+        }
+      }
       if (route === 'consent' || route === 'redirected') return { reached: route };
       if (route === 'unexpected_redirect') {
         throw new GoogleLoginError('Google OAuth redirected to an unexpected site', 'unexpected_redirect');
@@ -320,4 +402,5 @@ module.exports = {
   detectGoogleOAuthPage,
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
+  safeGooglePageSnapshot,
 };

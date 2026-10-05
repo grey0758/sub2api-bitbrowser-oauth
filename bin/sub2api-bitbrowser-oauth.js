@@ -59,6 +59,7 @@ function parseArgs(argv) {
     else if (item === '--project-id') args.projectId = String(argv[++i] || '').trim();
     else if (item === '--tier-id') args.tierId = String(argv[++i] || '').trim();
     else if (item === '--direct-browser-egress') args.directBrowserEgress = true;
+    else if (item === '--trace-google-state') args.traceGoogleState = true;
     else if (item === '--retry-failed') args.retryFailed = true;
     else if (item === '--retry-banned') args.retryBanned = true;
     else if (item === '--replace-banned') args.replaceBanned = true;
@@ -92,7 +93,7 @@ function usage() {
     '  node bin/sub2api-bitbrowser-oauth.js pool-status',
     '  node bin/sub2api-bitbrowser-oauth.js pool-google-status',
     '  node bin/sub2api-bitbrowser-oauth.js google-oauth-import-next [--oauth-type google_one|code_assist|ai_studio] [--project-id ID] [--tier-id ID] [--proxy-id ID] [--direct-browser-egress] [--timeout-ms N]',
-    '  node bin/sub2api-bitbrowser-oauth.js antigravity-oauth-import-next [--proxy-id ID] [--timeout-ms N]',
+    '  node bin/sub2api-bitbrowser-oauth.js antigravity-oauth-import-next [--proxy-id ID] [--timeout-ms N] [--trace-google-state]',
     '  node bin/sub2api-bitbrowser-oauth.js pool-reset-phone-cooldowns',
     '  node bin/sub2api-bitbrowser-oauth.js pool-correct-invalid-phone',
     '  node bin/sub2api-bitbrowser-oauth.js pool-enable-resend',
@@ -280,6 +281,9 @@ async function main(argv = process.argv.slice(2)) {
       sub2api: new Sub2ApiAdminClient(),
       browser,
       account: selected,
+      stateObserver: args.traceGoogleState
+        ? (snapshot) => console.error(`Google OAuth state: ${JSON.stringify(snapshot)}`)
+        : undefined,
     });
     try {
       const completed = await importer.run({
@@ -322,6 +326,9 @@ async function main(argv = process.argv.slice(2)) {
       sub2api: new Sub2ApiAdminClient(),
       browser,
       account: selected,
+      stateObserver: args.traceGoogleState
+        ? (snapshot) => console.error(`Google OAuth state: ${JSON.stringify(snapshot)}`)
+        : undefined,
     });
     try {
       const completed = await importer.run({

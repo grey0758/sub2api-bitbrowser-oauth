@@ -46,6 +46,7 @@ const {
   detectGoogleOAuthPage,
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
+  safeGooglePageSnapshot,
 } = require('../src/oauth/google-gemini-import');
 const {
   GoogleAntigravityOAuthImportFlow,
@@ -601,6 +602,29 @@ test('Google OAuth classifies authenticator selection and manual challenge route
   assert.equal(classifyGoogleChallengePath('https://accounts.google.com/signin/v2/challenge/pwd'), '');
 });
 
+test('Google OAuth safe state snapshot contains only structural categories', async () => {
+  const page = {
+    url: () => 'https://accounts.google.com/signin/oauth?state=must-not-leak',
+    async evaluate() {
+      return {
+        readyState: 'complete', bodyLength: 'short', bodyChildren: 1,
+        visibleInputs: [], visibleButtons: 0, visibleLinks: 0,
+        identifierTiles: 0, scripts: 2, frames: 0,
+        markers: { genericError: true },
+      };
+    },
+    frames: () => [],
+  };
+  const snapshot = await safeGooglePageSnapshot(page, { allowAntigravity: true, route: 'waiting' });
+  assert.deepEqual(snapshot, {
+    route: 'waiting', location: 'signin_oauth', readyState: 'complete',
+    bodyLength: 'short', bodyChildren: 1, visibleInputs: [], visibleButtons: 0,
+    visibleLinks: 0, identifierTiles: 0, scripts: 2, frames: 0,
+    markers: { genericError: true }, frameCategories: [],
+  });
+  assert.equal(JSON.stringify(snapshot).includes('must-not-leak'), false);
+});
+
 test('Google OAuth recognizes localized account chooser and bounded authenticator alternatives', async () => {
   const hidden = { async isVisible() { return false; } };
   const text = '使用其他账号';
@@ -1003,6 +1027,12 @@ test('CLI accepts and documents incognito mode', () => {
   assert.deepEqual(parseArgs(['reauthorize-errors', '--retry-banned']), {
     command: 'reauthorize-errors',
     retryBanned: true,
+  });
+});
+
+test('CLI accepts explicit sanitized Google state tracing', () => {
+  assert.deepEqual(parseArgs(['antigravity-oauth-import-next', '--proxy-id', '1', '--trace-google-state']), {
+    command: 'antigravity-oauth-import-next', proxyId: 1, traceGoogleState: true,
   });
 });
 
