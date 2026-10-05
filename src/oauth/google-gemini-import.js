@@ -11,7 +11,7 @@ const GOOGLE_HOSTS = new Set(['accounts.google.com', 'consent.google.com']);
 const GOOGLE_USE_ANOTHER_ACCOUNT = /^(?:Use another account|使用其他账号|使用其他帐号|使用其他帳戶|使用其他帳號|換用其他帳戶|Dùng một tài khoản khác|Sử dụng tài khoản khác)$/i;
 const GOOGLE_TRY_ANOTHER_WAY = /^(?:Try another way|Choose another option|换一种方式|換一種方式|尝试其他方式|嘗試其他方式|試試其他方式|Thử cách khác)$/i;
 const GOOGLE_AUTHENTICATOR_METHOD = /(?:Google Authenticator|Authenticator app|verification code from (?:the )?Google Authenticator|Google 身份验证器|Google 身分驗證器|ứng dụng Google Authenticator)/i;
-const GOOGLE_CONSENT_ACTION = /^(?:Continue|Allow|Approve|Agree|继续|繼續|允许|允許|同意|Tiếp tục|Cho phép)$/i;
+const GOOGLE_CONSENT_ACTION = /^(?:Continue|Allow|Approve|Agree|Sign in|继续|繼續|允许|允許|同意|登录|登入|Tiếp tục|Cho phép|Đăng nhập)$/i;
 const GOOGLE_NEXT_ACTION = /^(?:Next|下一步|繼續|继续|Tiếp theo)$/i;
 const GOOGLE_MANUAL_CHALLENGE_TEXT = /(?:confirm you(?:'|’)?re not a robot|recaptcha|enter the characters you see|account recovery|check your phone|tap yes on your phone|确认您不是机器人|確認您不是機器人|输入您看到的字符|輸入您看到的字元|恢复账号|恢復帳戶|查看您的手机|查看您的手機|请在手机上点按|請在手機上輕觸|xác nhận bạn không phải là rô-bốt|kiểm tra điện thoại)/i;
 

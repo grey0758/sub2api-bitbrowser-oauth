@@ -713,6 +713,13 @@ test('Google OAuth recognizes localized account chooser and bounded authenticato
   const alternative = 'Try another way';
   page.getByText = (pattern) => ({ last: () => ({ async isVisible() { return pattern.test(alternative); } }) });
   assert.equal(await detectGoogleOAuthPage(page), 'challenge_alternatives');
+
+  page.url = () => 'https://accounts.google.com/signin/oauth/consent';
+  page.getByText = () => ({ last: () => hidden });
+  page.getByRole = (_role, { name }) => ({
+    last: () => ({ async isVisible() { return name.test('Sign in'); } }),
+  });
+  assert.equal(await detectGoogleOAuthPage(page, { allowAntigravity: true }), 'consent');
 });
 
 test('Google OAuth stops instead of entering TOTP on CAPTCHA routes', async () => {
