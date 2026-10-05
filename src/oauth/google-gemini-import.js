@@ -36,6 +36,15 @@ function isAllowedGoogleOAuthLocation(value) {
   return GOOGLE_HOSTS.has(host) || host === 'codeassist.google.com';
 }
 
+function withGoogleLoginHint(value, email) {
+  const parsed = new URL(value);
+  if (parsed.protocol !== 'https:' || !GOOGLE_HOSTS.has(parsed.hostname.toLowerCase())) {
+    throw new GoogleLoginError('Google OAuth authorization page was unreachable', 'navigation_failed');
+  }
+  parsed.searchParams.set('login_hint', email);
+  return parsed.toString();
+}
+
 function classifyGoogleChallengePath(value) {
   const pathname = googlePath(value);
   if (/\/challenge\/(?:totp|authenticator)(?:\/|$)/.test(pathname)) return 'totp';
@@ -415,4 +424,5 @@ module.exports = {
   readGoogleTwoFactor,
   safeGooglePageSnapshot,
   typeAndSubmitGoogleField,
+  withGoogleLoginHint,
 };

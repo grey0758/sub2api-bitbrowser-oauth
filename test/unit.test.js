@@ -48,6 +48,7 @@ const {
   readGoogleTwoFactor,
   safeGooglePageSnapshot,
   typeAndSubmitGoogleField,
+  withGoogleLoginHint,
 } = require('../src/oauth/google-gemini-import');
 const {
   GoogleAntigravityOAuthImportFlow,
@@ -644,6 +645,19 @@ test('Google OAuth types sequentially and clicks the visible Next control', asyn
   assert.deepEqual(calls, [
     'click-input', ['fill', ''], ['type', 'runtime-only', 85], 'click-next',
   ]);
+});
+
+test('Google OAuth login hint preserves authorization state without accepting another host', () => {
+  const hinted = new URL(withGoogleLoginHint(
+    'https://accounts.google.com/o/oauth2/v2/auth?state=runtime-state&client_id=client',
+    'google@example.com'
+  ));
+  assert.equal(hinted.searchParams.get('login_hint'), 'google@example.com');
+  assert.equal(hinted.searchParams.get('state'), 'runtime-state');
+  assert.throws(
+    () => withGoogleLoginHint('https://attacker.example/oauth?state=runtime-state', 'google@example.com'),
+    (error) => error instanceof GoogleLoginError && error.code === 'navigation_failed'
+  );
 });
 
 test('Google OAuth recognizes localized account chooser and bounded authenticator alternatives', async () => {

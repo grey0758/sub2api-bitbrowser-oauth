@@ -6,6 +6,7 @@ const {
   GOOGLE_CONSENT_ACTION,
   detectGoogleOAuthPage,
   isAllowedGoogleOAuthLocation,
+  withGoogleLoginHint,
 } = require('./google-gemini-import');
 
 class GoogleAntigravityOAuthImportFlow extends GoogleGeminiOAuthImportFlow {
@@ -20,7 +21,7 @@ class GoogleAntigravityOAuthImportFlow extends GoogleGeminiOAuthImportFlow {
         timeoutMs: Math.min(timeoutMs, 90_000),
       });
       try {
-        await session.goto(authorization.authUrl, {
+        await session.goto(withGoogleLoginHint(authorization.authUrl, this.account.email), {
           waitUntil: 'commit',
           timeout: Math.min(timeoutMs, 90_000),
         });
