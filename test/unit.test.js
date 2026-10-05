@@ -1681,6 +1681,7 @@ test('local pool encrypts its file and enforces the 45-minute phone cooldown', a
           browser_rejected: 0,
           invalid_credentials: 0,
           invalid_two_factor: 0,
+          protocol_incomplete: 0,
           rate_limited: 0,
         },
       },
@@ -1763,6 +1764,7 @@ test('local pool isolates Google credentials from OpenAI selection and permits c
           browser_rejected: 0,
           invalid_credentials: 0,
           invalid_two_factor: 0,
+          protocol_incomplete: 0,
           rate_limited: 0,
         },
       },
@@ -1839,12 +1841,16 @@ test('Google OAuth terminal account outcomes require review while infrastructure
     async markGoogleStored(...args) { calls.push(['stored', ...args]); },
   };
   await recordGoogleAttemptFailure(pool, 'first-id', new GoogleLoginError('sanitized', 'manual_challenge'));
-  await recordGoogleAttemptFailure(pool, 'second-id', new GoogleLoginError('sanitized', 'navigation_failed'));
+  await recordGoogleAttemptFailure(pool, 'second-id', new GoogleLoginError('sanitized', 'unrecognized_page'));
+  await recordGoogleAttemptFailure(pool, 'third-id', new GoogleLoginError('sanitized', 'navigation_failed'));
   assert.equal(calls[0][0], 'review');
   assert.equal(calls[0][1], 'first-id');
   assert.equal(calls[0][2], 'account_risk');
   assert.match(calls[0][3], /account_risk/);
-  assert.deepEqual(calls[1], ['stored', 'second-id', 'navigation_failed']);
+  assert.equal(calls[1][0], 'review');
+  assert.equal(calls[1][1], 'second-id');
+  assert.equal(calls[1][2], 'protocol_incomplete');
+  assert.deepEqual(calls[2], ['stored', 'third-id', 'navigation_failed']);
 });
 
 test('local pool atomically replaces old Google rows and accepts dashed private input', async () => {

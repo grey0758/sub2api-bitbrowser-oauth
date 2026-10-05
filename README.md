@@ -208,7 +208,10 @@ Gemini or Antigravity account-list postcondition passes. Account-level terminal
 outcomes (manual risk challenge, browser rejection, invalid credentials or
 two-factor code, and rate limiting) become `review_required` with a sanitized
 reason and note, so automatic selection does not retry them. Infrastructure
-and protocol failures return the row to `stored` for operator diagnosis.
+transport failures return the row to `stored` for operator diagnosis. A login
+page that stalls, times out, or is not recognized becomes
+`review_required/protocol_incomplete`, preserving the one-attempt boundary
+until an operator reviews the page handling.
 `pool-google-status` prints counts only.
 Private-history recovery must stream extracted rows directly to this command;
 never save a transcript or plaintext credential export in the repository.

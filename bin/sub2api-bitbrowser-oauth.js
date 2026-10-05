@@ -33,12 +33,15 @@ const {
   parseAccountPoolSource,
 } = require('../src/pool/local-import-pool');
 
-const GOOGLE_REVIEW_ERROR_CODES = new Set([
-  'manual_challenge',
-  'invalid_credentials',
-  'invalid_two_factor',
-  'rate_limited',
-  'browser_rejected',
+const GOOGLE_REVIEW_ERROR_REASONS = new Map([
+  ['manual_challenge', 'account_risk'],
+  ['invalid_credentials', 'invalid_credentials'],
+  ['invalid_two_factor', 'invalid_two_factor'],
+  ['rate_limited', 'rate_limited'],
+  ['browser_rejected', 'browser_rejected'],
+  ['unrecognized_page', 'protocol_incomplete'],
+  ['login_stalled', 'protocol_incomplete'],
+  ['timeout', 'protocol_incomplete'],
 ]);
 
 async function readStdin() {
@@ -176,8 +179,8 @@ async function recordGoogleAttemptFailure(pool, selectedId, error) {
     : error instanceof Sub2ApiError
       ? 'sub2api_error'
       : 'failed';
-  if (error instanceof GoogleLoginError && GOOGLE_REVIEW_ERROR_CODES.has(error.code)) {
-    const reason = error.code === 'manual_challenge' ? 'account_risk' : error.code;
+  if (error instanceof GoogleLoginError && GOOGLE_REVIEW_ERROR_REASONS.has(error.code)) {
+    const reason = GOOGLE_REVIEW_ERROR_REASONS.get(error.code);
     await pool.markGoogleReviewRequired(
       selectedId,
       reason,

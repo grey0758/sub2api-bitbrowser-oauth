@@ -18,6 +18,7 @@ const GOOGLE_REVIEW_REASONS = new Set([
   'browser_rejected',
   'invalid_credentials',
   'invalid_two_factor',
+  'protocol_incomplete',
   'rate_limited',
 ]);
 const PHONE_COOLDOWN_MS = 45 * 60_000;

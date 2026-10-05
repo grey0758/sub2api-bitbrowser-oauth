@@ -38,7 +38,9 @@ description: Use this skill when generating or exchanging a Sub2API OpenAI, Goog
    invalid two-factor code, or Google rate limit as terminal for automatic
    selection. Mark the encrypted row `review_required` with a sanitized reason
    and single-line note; do not automatically retry that row. Leave transport,
-   navigation, and Sub2API failures `stored` for operator diagnosis.
+   navigation, and Sub2API failures `stored` for operator diagnosis. Mark a
+   stalled, timed-out, or unrecognized login page as
+   `review_required/protocol_incomplete` until the page handling is reviewed.
 9. Before replacing the Google queue, copy the existing DPAPI file into a
    current-user-only `.runtime/backups/` path and verify the ciphertext copy by
    size and hash. Validate the complete stdin batch before deleting any prior
