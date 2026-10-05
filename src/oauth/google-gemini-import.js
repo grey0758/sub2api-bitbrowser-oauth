@@ -12,6 +12,7 @@ const GOOGLE_USE_ANOTHER_ACCOUNT = /^(?:Use another account|使用其他账号|�
 const GOOGLE_TRY_ANOTHER_WAY = /^(?:Try another way|Choose another option|换一种方式|換一種方式|尝试其他方式|嘗試其他方式|試試其他方式|Thử cách khác)$/i;
 const GOOGLE_AUTHENTICATOR_METHOD = /(?:Google Authenticator|Authenticator app|verification code from (?:the )?Google Authenticator|Google 身份验证器|Google 身分驗證器|ứng dụng Google Authenticator)/i;
 const GOOGLE_CONSENT_ACTION = /^(?:Continue|Allow|Approve|Agree|继续|繼續|允许|允許|同意|Tiếp tục|Cho phép)$/i;
+const GOOGLE_NEXT_ACTION = /^(?:Next|下一步|繼續|继续|Tiếp theo)$/i;
 const GOOGLE_MANUAL_CHALLENGE_TEXT = /(?:confirm you(?:'|’)?re not a robot|recaptcha|enter the characters you see|account recovery|check your phone|tap yes on your phone|确认您不是机器人|確認您不是機器人|输入您看到的字符|輸入您看到的字元|恢复账号|恢復帳戶|查看您的手机|查看您的手機|请在手机上点按|請在手機上輕觸|xác nhận bạn không phải là rô-bốt|kiểm tra điện thoại)/i;
 
 class GoogleLoginError extends Error {
@@ -49,6 +50,15 @@ function classifyGoogleChallengePath(value) {
 
 async function visible(locator) {
   return locator.isVisible().catch(() => false);
+}
+
+async function typeAndSubmitGoogleField(page, input, value) {
+  await input.click({ timeout: 5_000 });
+  await input.fill('', { timeout: 5_000 });
+  await input.pressSequentially(value, { delay: 85, timeout: 30_000 });
+  const next = page.getByRole('button', { name: GOOGLE_NEXT_ACTION }).last();
+  if (await visible(next)) await next.click({ timeout: 5_000 });
+  else await input.press('Enter', { timeout: 5_000 });
 }
 
 function googleText(page, pattern) {
@@ -266,12 +276,10 @@ class GoogleGeminiOAuthImportFlow {
         await googleText(page, GOOGLE_USE_ANOTHER_ACCOUNT).click({ timeout: 5_000 });
       } else if (route === 'email') {
         const input = page.locator('input[type="email"], input#identifierId').first();
-        await input.fill(this.account.email, { timeout: 5_000 });
-        await input.press('Enter', { timeout: 5_000 });
+        await typeAndSubmitGoogleField(page, input, this.account.email);
       } else if (route === 'password') {
         const input = page.locator('input[type="password"]').first();
-        await input.fill(this.account.password, { timeout: 5_000 });
-        await input.press('Enter', { timeout: 5_000 });
+        await typeAndSubmitGoogleField(page, input, this.account.password);
       } else if (route === 'totp') {
         const input = page.locator('input[name="totpPin"], input#totpPin, input[autocomplete="one-time-code"]').first();
         await input.waitFor({ state: 'visible', timeout: 10_000 });
@@ -281,8 +289,7 @@ class GoogleGeminiOAuthImportFlow {
         if (await detectGoogleOAuthPage(page) === 'unsupported_challenge') {
           throw new GoogleLoginError('Google changed the verification challenge', 'manual_challenge');
         }
-        await input.fill(code, { timeout: 5_000 });
-        await input.press('Enter', { timeout: 5_000 });
+        await typeAndSubmitGoogleField(page, input, code);
       } else if (route === 'challenge_alternatives') {
         await googleText(page, GOOGLE_TRY_ANOTHER_WAY).click({ timeout: 5_000 });
       } else if (route === 'challenge_selection') {
@@ -398,6 +405,7 @@ module.exports = {
   GoogleLoginError,
   GOOGLE_AUTHENTICATOR_METHOD,
   GOOGLE_CONSENT_ACTION,
+  GOOGLE_NEXT_ACTION,
   GOOGLE_TRY_ANOTHER_WAY,
   GOOGLE_USE_ANOTHER_ACCOUNT,
   assertGoogleLoginHealthy,
@@ -406,4 +414,5 @@ module.exports = {
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
   safeGooglePageSnapshot,
+  typeAndSubmitGoogleField,
 };

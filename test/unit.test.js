@@ -47,6 +47,7 @@ const {
   isAllowedGoogleOAuthLocation,
   readGoogleTwoFactor,
   safeGooglePageSnapshot,
+  typeAndSubmitGoogleField,
 } = require('../src/oauth/google-gemini-import');
 const {
   GoogleAntigravityOAuthImportFlow,
@@ -623,6 +624,26 @@ test('Google OAuth safe state snapshot contains only structural categories', asy
     markers: { genericError: true }, frameCategories: [],
   });
   assert.equal(JSON.stringify(snapshot).includes('must-not-leak'), false);
+});
+
+test('Google OAuth types sequentially and clicks the visible Next control', async () => {
+  const calls = [];
+  const input = {
+    async click() { calls.push('click-input'); },
+    async fill(value) { calls.push(['fill', value]); },
+    async pressSequentially(value, options) { calls.push(['type', value, options.delay]); },
+    async press() { calls.push('unexpected-enter'); },
+  };
+  const next = {
+    async isVisible() { return true; },
+    async click() { calls.push('click-next'); },
+  };
+  await typeAndSubmitGoogleField({
+    getByRole() { return { last: () => next }; },
+  }, input, 'runtime-only');
+  assert.deepEqual(calls, [
+    'click-input', ['fill', ''], ['type', 'runtime-only', 85], 'click-next',
+  ]);
 });
 
 test('Google OAuth recognizes localized account chooser and bounded authenticator alternatives', async () => {
