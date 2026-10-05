@@ -10,13 +10,14 @@ const {
 } = require('./google-gemini-import');
 
 class GoogleAntigravityOAuthImportFlow extends GoogleGeminiOAuthImportFlow {
-  async run({ proxyId, incognito = true, timeoutMs = 10 * 60_000 } = {}) {
+  async run({ proxyId, incognito = false, timeoutMs = 10 * 60_000 } = {}) {
     const authorization = await this.sub2api.generateAntigravityAuthUrl({ proxyId });
     let session;
     try {
       session = await this.browser.open({
         incognito,
-        restartForLaunchArgs: true,
+        restartWindow: true,
+        restartForLaunchArgs: incognito,
         useDefaultContext: true,
         timeoutMs: Math.min(timeoutMs, 90_000),
       });

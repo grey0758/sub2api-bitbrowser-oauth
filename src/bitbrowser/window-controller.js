@@ -37,6 +37,7 @@ class FixedWindowController {
     url,
     incognito = false,
     directEgress = false,
+    restartWindow = false,
     restartForLaunchArgs = false,
     useDefaultContext = false,
     waitUntil = 'domcontentloaded',
@@ -47,7 +48,7 @@ class FixedWindowController {
     const args = [];
     if (incognito) args.push('--incognito');
     if (directEgress) args.push('--no-proxy-server');
-    if (restartForLaunchArgs && args.length > 0 && Number(window.status) === 1) {
+    if ((restartWindow || (restartForLaunchArgs && args.length > 0)) && Number(window.status) === 1) {
       await this.client.closeWindow(window.id);
     }
     const opened = await this.client.openWindow(window.id, args.length > 0 ? { args } : {});

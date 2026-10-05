@@ -1067,6 +1067,27 @@ test('BitBrowser launch-level incognito can restart exact window and retain its 
   ]);
 });
 
+test('BitBrowser can restart exact window into the saved persistent context', async () => {
+  const calls = [];
+  const context = { pages: () => [{}] };
+  const browser = { contexts: () => [context], async close() { calls.push(['disconnect']); } };
+  const controller = new FixedWindowController({
+    client: {
+      async listWindows() { return [{ id: 'w', name: 'us001_codex', status: 1 }]; },
+      async closeWindow(id) { calls.push(['close-window', id]); },
+      async openWindow(id, options) { calls.push(['open', id, options]); return { ws: 'ws://fake' }; },
+    },
+    chromiumImpl: { connectOverCDP: async () => browser },
+  });
+  const session = await controller.open({ restartWindow: true, useDefaultContext: true });
+  assert.equal(session.context, context);
+  assert.equal(session.ownsContext, false);
+  await controller.release();
+  assert.deepEqual(calls, [
+    ['close-window', 'w'], ['open', 'w', {}], ['disconnect'],
+  ]);
+});
+
 test('direct browser egress is an explicit launch-only option on the exact profile', async () => {
   const calls = [];
   const context = {
