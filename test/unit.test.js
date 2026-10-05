@@ -631,9 +631,11 @@ test('Google OAuth safe state snapshot contains only structural categories', asy
 test('Google OAuth types sequentially and clicks the visible Next control', async () => {
   const calls = [];
   const input = {
+    value: '',
     async click() { calls.push('click-input'); },
-    async fill(value) { calls.push(['fill', value]); },
-    async pressSequentially(value, options) { calls.push(['type', value, options.delay]); },
+    async fill(value) { this.value = value; calls.push(['fill', value]); },
+    async pressSequentially(value, options) { this.value = value; calls.push(['type', value, options.delay]); },
+    async inputValue() { return this.value; },
     async press() { calls.push('unexpected-enter'); },
   };
   const next = {
@@ -647,6 +649,23 @@ test('Google OAuth types sequentially and clicks the visible Next control', asyn
   assert.deepEqual(calls, [
     'click-input', ['fill', ''], ['type', 'runtime-only', 85], ['wait', 600], 'click-next',
   ]);
+});
+
+test('Google OAuth corrects keyboard-layout drift before submitting a field', async () => {
+  const calls = [];
+  const input = {
+    value: '',
+    async click() {},
+    async fill(value) { this.value = value; calls.push(['fill', value]); },
+    async pressSequentially(value) { this.value = `wrong-${value}`; },
+    async inputValue() { return this.value; },
+  };
+  const next = { async isVisible() { return true; }, async click() { calls.push('submit'); } };
+  await typeAndSubmitGoogleField({
+    getByRole() { return { last: () => next }; },
+    async waitForTimeout() {},
+  }, input, 'runtime-only');
+  assert.deepEqual(calls, [['fill', ''], ['fill', 'runtime-only'], 'submit']);
 });
 
 test('Google OAuth network diagnostics expose only endpoint categories', () => {

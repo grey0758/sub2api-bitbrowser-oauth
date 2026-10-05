@@ -65,6 +65,12 @@ async function typeAndSubmitGoogleField(page, input, value) {
   await input.click({ timeout: 5_000 });
   await input.fill('', { timeout: 5_000 });
   await input.pressSequentially(value, { delay: 85, timeout: 30_000 });
+  if (await input.inputValue() !== value) {
+    await input.fill(value, { timeout: 5_000 });
+  }
+  if (await input.inputValue() !== value) {
+    throw new GoogleLoginError('Google login field did not retain the selected account value', 'input_mismatch');
+  }
   await page.waitForTimeout(600);
   const next = page.getByRole('button', { name: GOOGLE_NEXT_ACTION }).last();
   if (await visible(next)) await next.click({ timeout: 5_000 });
